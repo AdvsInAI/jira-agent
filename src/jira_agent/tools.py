@@ -171,15 +171,28 @@ def _search_issues(jira: JiraClient, jql: str, max_results: int = 20) -> dict:
         "issues": [
             {
                 "key": i["key"],
-                "summary": i["fields"].get("summary"),
+                "summary": _untrusted(i["fields"].get("summary")),
                 "status": (i["fields"].get("status") or {}).get("name"),
                 "issuetype": (i["fields"].get("issuetype") or {}).get("name"),
                 "priority": (i["fields"].get("priority") or {}).get("name"),
-                "assignee": (i["fields"].get("assignee") or {}).get("displayName"),
+                "assignee": _untrusted(
+                    (i["fields"].get("assignee") or {}).get("displayName")
+                ),
             }
             for i in raw.get("issues", [])
         ]
     }
+
+
+def _untrusted(value: str | None) -> str | None:
+    # Free-text fields (summary, assignee displayName) are populated by Jira
+    # users, including external reporters on service-desk projects. Wrap them
+    # so the model can syntactically distinguish data from instructions; strip
+    # any embedded delimiters first so a hostile value can't close the tag.
+    if value is None:
+        return None
+    sanitized = value.replace("<untrusted>", "").replace("</untrusted>", "")
+    return f"<untrusted>{sanitized}</untrusted>"
 
 
 def _transition_issue(jira: JiraClient, issue_key: str, transition_name: str) -> dict:
