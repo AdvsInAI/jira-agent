@@ -57,7 +57,7 @@ Every chat turn is a small loop inside `Agent.chat()`:
 ## Project structure
 
 ```
-jira_integration/
+jira-agent/
 |
 |-- pyproject.toml                # uv-managed; deps: httpx, openai, python-dotenv
 |-- uv.lock                       # pinned dependency tree
@@ -75,7 +75,7 @@ jira_integration/
 |   `-- cli.py                    # interactive REPL with readline history
 |
 `-- scripts/
-    |-- ping_llm.py               # one-shot smoke test: OpenRouter reachable?
+    |-- ping_llm.py               # one-shot smoke test: LLM endpoint reachable?
     `-- ping_jira.py              # one-shot smoke test: Jira auth working?
 ```
 

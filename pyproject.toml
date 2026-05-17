@@ -1,7 +1,7 @@
 [project]
 name = "jira-agent"
 version = "0.1.0"
-description = "Add your description here"
+description = "LLM-driven Jira agent: drive Atlassian Cloud Jira through natural-language requests in a terminal REPL."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
