@@ -215,7 +215,7 @@ cp .env.example .env
 Verify connectivity:
 
 ```
-uv run python scripts/ping_llm.py     # confirms OpenRouter reaches your model
+uv run python scripts/ping_llm.py     # confirms LLM endpoint reaches your model
 uv run python scripts/ping_jira.py    # confirms Jira credentials work
 ```
 
