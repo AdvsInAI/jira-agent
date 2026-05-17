@@ -218,3 +218,7 @@ def dispatch(tool_name: str, arguments: dict[str, Any], jira: JiraClient) -> dic
         return {"ok": False, "error": str(e)}
     except TypeError as e:
         return {"ok": False, "error": f"Invalid arguments: {e}"}
+    except Exception as e:
+        # Catch-all so dispatch() is total: agent.py relies on every tool_call
+        # producing a tool response, otherwise the chat history becomes invalid.
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
