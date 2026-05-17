@@ -103,12 +103,13 @@ The `on_tool_call` observer in step 6 is what prints the `->` and `<-` lines you
 
 [`sooperset/mcp-atlassian`](https://github.com/sooperset/mcp-atlassian) and similar MCP servers would work, but for a learning project they add a second process, a second protocol, and an abstraction layer that hides exactly the mechanics this project is meant to expose. Direct REST keeps everything in one Python process, in a debugger you can step through. Swapping to MCP later is mechanical -- tool schemas don't change, only the dispatch layer (`tools.py`) does.
 
-### OpenAI-compatible client pointed at OpenRouter
+### OpenAI-compatible client, configurable provider
 
-`llm.py` uses the official `openai` Python SDK with `base_url` overridden to `https://openrouter.ai/api/v1`. Almost every modern open-weight model on OpenRouter speaks the OpenAI tool-call wire format. This single decision means:
+`llm.py` uses the official `openai` Python SDK with `base_url` and `api_key` driven by env vars (`LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`), defaulting to OpenRouter (`https://openrouter.ai/api/v1`). Almost every modern open-weight model on OpenRouter -- and most local servers (vLLM, Ollama, LM Studio) and hosted aggregators (Together, Groq) -- speak the OpenAI tool-call wire format. This single decision means:
 
-- The model name (`OPENROUTER_MODEL` env var) is the swap point. Change one line in `.env` to use Llama, Qwen, DeepSeek, Mistral, anything OpenRouter exposes.
-- Pointing at a local vLLM / Ollama / LM Studio instance later requires only swapping `base_url`. No structural changes.
+- The model is a one-line `.env` change (`LLM_MODEL`).
+- The provider is a one-line `.env` change (`LLM_BASE_URL`).
+- No code edit is required to point at a local Ollama, a vLLM cluster, or a different aggregator. The wrapper is provider-agnostic; `LLM_*` names reflect that.
 
 ### Five tools, no destructive bulk operations in v1
 
@@ -201,8 +202,9 @@ Configuration:
 ```
 cp .env.example .env
 # Fill in:
-#   OPENROUTER_API_KEY
-#   OPENROUTER_MODEL          (e.g. google/gemma-4-31b-it:free)
+#   LLM_API_KEY               (OpenRouter key by default; any OpenAI-compatible provider's key)
+#   LLM_MODEL                 (e.g. google/gemma-4-31b-it:free)
+#   LLM_BASE_URL              (optional; defaults to https://openrouter.ai/api/v1)
 #   JIRA_BASE_URL             (https://<yoursite>.atlassian.net, no trailing slash)
 #   JIRA_EMAIL                (the email you log into Atlassian with)
 #   JIRA_API_TOKEN
@@ -225,24 +227,32 @@ uv run jira-agent
 
 Exit with `/exit`, `/quit`, or Ctrl+D. Blank lines are a no-op.
 
-## Swapping models
+## Swapping models and providers
 
-The model is a single environment variable. To switch from Gemma to Llama 3.3 70B for instance, edit `.env`:
+Both the model and the inference provider are environment variables. No code change is needed for either.
+
+To switch models (same provider), edit `.env`:
 
 ```
-OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct:free
+LLM_MODEL=meta-llama/llama-3.3-70b-instruct:free
 ```
 
-Restart the REPL. No code change.
+To switch providers (e.g. point at a local Ollama server), set `LLM_BASE_URL` and the matching `LLM_API_KEY`:
 
-Some notes when picking models:
+```
+LLM_BASE_URL=http://localhost:11434/v1
+LLM_API_KEY=ollama                                 # Ollama ignores it; OpenAI SDK requires a non-empty string
+LLM_MODEL=llama3.3
+```
+
+Other endpoints follow the same shape -- `https://api.together.xyz/v1`, `https://api.groq.com/openai/v1`, a vLLM server's `/v1`, etc. Restart the REPL after editing.
+
+Some notes when picking models (assumes OpenRouter, the default provider):
 
 - Verify the exact slug on https://openrouter.ai/models -- providers change.
 - Models with **multiple upstream providers** are more resilient to rate limits than single-provider ones. The provider list is on each model's OpenRouter page.
 - Tool-calling reliability varies. Llama 3.x, Qwen 2.5, and DeepSeek V3 tend to be strong; smaller open-weight models can be unreliable at emitting valid tool-call JSON.
 - For free tiers backed by Google AI Studio (currently the Gemma family), bringing your own Google AI Studio API key via OpenRouter's BYOK integration sidesteps the shared-pool rate limiting.
-
-To swap inference *providers* (e.g. point at a local Ollama server), change `OPENROUTER_BASE_URL` in `llm.py` -- one line.
 
 ## Known limitations
 

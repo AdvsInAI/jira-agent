@@ -54,7 +54,7 @@ def main() -> None:
     _setup_readline()
     agent = Agent(cfg, on_tool_call=_show_tool_call)
 
-    print(f"Jira agent ready. Model: {cfg.openrouter_model}")
+    print(f"Jira agent ready. Model: {cfg.llm_model}")
     print("Type a request. Ctrl+D or /exit to quit.\n")
 
     exit_commands = {"/exit", "/quit"}
