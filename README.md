@@ -140,7 +140,7 @@ Most turns finish in one or two iterations. A complex turn might use four. Six g
 
 ## Security
 
-The agent reads from and writes to a real Jira instance, so a few guardrails are in place. They are the cheap, standard-hygiene defenses -- none are bulletproof, and one important one is deliberately not in scope (see the bottom of this section).
+The agent reads from and writes to a real Jira instance, so a few guardrails are in place. They are the cheap, standard-hygiene defenses -- none are bulletproof, and the one mitigation that would actually *prevent* damage from a successful injection (human-in-the-loop write confirmation) is deliberately deferred; see [Out of scope for v1](#out-of-scope-for-v1).
 
 ### Tool dispatch is total
 
@@ -157,9 +157,22 @@ Two layered defenses:
 
 Neither is bulletproof. Prompt-level defenses are probabilistic by nature, and smaller models are generally less robust. Smoke-tested by planting a hostile summary and asking the agent to list open issues -- the model quoted the injected text back as data rather than acting on it. One trial, not a proof.
 
-### What is deliberately not in scope
+## Out of scope for v1
 
-The only mitigation that actually *stops* a successful injection from causing damage is a human-in-the-loop confirmation before every write tool (`create_issue`, `transition_issue`, `add_comment`, `assign_issue`). This was considered and deferred. Rationale: this is a single-user learning project pointed at a personal Jira instance, the deferred mitigation adds noticeable REPL friction, and the cheaper prompt-level defenses raise the bar enough for the current threat model. If the project ever grows beyond a learning project -- shared Jira instance, untrusted reporters, automation that ingests external content -- revisit this decision. The simplest implementation would extend the existing `on_tool_call` observer in `agent.py` to allow vetoing a call, or add a `--confirm-writes` CLI flag.
+Deliberate product gaps. Not bugs, not oversights -- decisions taken for the learning-project scope that would need revisiting if this ever became a tool for daily use.
+
+### Write confirmation / dry-run mode
+
+The four write tools (`create_issue`, `transition_issue`, `add_comment`, `assign_issue`) execute immediately once the model emits a tool call. There is no preview, no y/N prompt, no dry-run mode that shows the intended HTTP call without sending it. This is the single largest product-risk gap, for two related reasons:
+
+1. **Model error.** A misunderstood request (`"transition all open issues to Done"` interpreted literally), a hallucinated issue key, or an over-eager `add_comment` produces a real Jira write the user did not intend. No malice required -- just an imperfect model.
+2. **Indirect prompt injection.** A hostile or accidental issue summary can drive the model to call a write tool the user did not ask for. The `<untrusted>` delimiting and SYSTEM_PROMPT guidance described under [Security](#security) reduce the probability, but only a confirmation gate actually prevents damage.
+
+Both threats are mitigated by the same intervention: confirm writes before they fire, or run them through a dry-run mode.
+
+Deferred because this is a single-user learning project pointed at a personal Jira instance, the user is watching every tool call in the REPL trace as it happens, and a confirmation prompt would add noticeable friction to the read-act-recover loop the project is built around. Revisit if any of the following change: the Jira instance becomes shared, untrusted reporters can create issues, automation ingests external content, or the agent ever runs unattended.
+
+The simplest implementation would extend the existing `on_tool_call` observer in `agent.py` to allow vetoing a call (return a sentinel that `dispatch()` translates into an `{"ok": false, "error": "user declined"}` envelope), or add a `--confirm-writes` CLI flag that wraps each write tool's handler.
 
 ## The five tools
 
