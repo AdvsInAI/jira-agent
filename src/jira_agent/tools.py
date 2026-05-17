@@ -15,6 +15,11 @@ from typing import Any, Callable
 
 from .jira_client import JiraClient, JiraError
 
+# Cap on issues returned per search_issues call. Bounds tool-result size so a
+# bad model call cannot blow up token cost or context window; if the user
+# legitimately needs more results, the right answer is a narrower JQL query.
+MAX_SEARCH_RESULTS = 50
+
 TOOL_SCHEMAS: list[dict] = [
     {
         "type": "function",
@@ -73,8 +78,14 @@ TOOL_SCHEMAS: list[dict] = [
                     },
                     "max_results": {
                         "type": "integer",
-                        "description": "Maximum number of issues to return (default 20).",
+                        "description": (
+                            "Maximum number of issues to return. Default 20, "
+                            "capped at 50. If you need more, narrow the query "
+                            "with more specific JQL rather than raising this."
+                        ),
                         "default": 20,
+                        "minimum": 1,
+                        "maximum": 50,
                     },
                 },
                 "required": ["jql"],
@@ -166,6 +177,9 @@ def _create_issue(
 
 
 def _search_issues(jira: JiraClient, jql: str, max_results: int = 20) -> dict:
+    # Belt-and-suspenders: the schema declares maximum=50 to steer the model,
+    # but enforce it server-side too in case the model ignores the schema.
+    max_results = min(max(1, max_results), MAX_SEARCH_RESULTS)
     raw = jira.search_issues(jql, max_results)
     return {
         "issues": [
