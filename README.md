@@ -15,6 +15,8 @@ Created P1 bug SCRUM-6: "Login page hangs on submit".
 ## Architecture
 
 ```
+Boxed components are code in this repo. Unboxed labels are external services.
+
 +-------------------+        +---------------------+
 |  CLI REPL         |  user  |  Agent              |
 |  (src/.../cli.py) +------->+  (agent.py)         |
@@ -25,17 +27,23 @@ Created P1 bug SCRUM-6: "Login page hangs on submit".
                        LLM call   |        |  Tool dispatch
                                   v        v
                        +----------+--+  +--+------------+
-                       | LLMClient   |  | tools.py      |
-                       | (llm.py)    |  | (HANDLERS)    |
-                       +-----+-------+  +-----+---------+
+                       | LLMClient   |  | tools.py     |
+                       | (llm.py)    |  | (HANDLERS)   |
+                       +-----+-------+  +-----+--------+
+                             |                |
+                             |                v
+                             |    +-----------+--------+
+                             |    | JiraClient         |
+                             |    | (jira_client.py)   |
+                             |    +-----------+--------+
                              |                |
                              v                v
-                       OpenRouter         JiraClient
-                       (OpenAI-compat)    (jira_client.py)
-                             |                |
-                             v                v
-                       Upstream LLM       Atlassian Cloud
-                       provider (e.g.     REST API v3
+                       OpenRouter         Atlassian Cloud
+                       (OpenAI-compat)    REST API v3
+                             |
+                             v
+                       Upstream LLM
+                       provider (e.g.
                        Google AI Studio)
 ```
 
