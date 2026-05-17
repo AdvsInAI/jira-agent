@@ -25,6 +25,15 @@ class JiraClient:
             timeout=30.0,
         )
 
+    def close(self) -> None:
+        self._client.close()
+
+    def __enter__(self) -> "JiraClient":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         resp = self._client.request(method, f"{self._base}{path}", **kwargs)
         if resp.status_code >= 400:
