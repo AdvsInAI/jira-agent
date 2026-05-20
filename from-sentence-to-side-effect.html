@@ -1,0 +1,2127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>From Sentence to Side Effect — jira-agent walkthrough</title>
+
+<!-- ===========================================
+     FONTS: Manrope (display + body) + JetBrains Mono (code/labels)
+     Electric Studio preset: clean, confident, engineering-leaning.
+     =========================================== -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+
+<style>
+/* ===========================================
+   THEME — Electric Studio
+   Tweak any variable here to re-skin the deck.
+   =========================================== */
+:root {
+    --bg-dark: #0a0e1a;         /* deep navy background */
+    --bg-dark-soft: #141a2e;    /* slightly lighter for cards on dark */
+    --bg-light: #f4f1ea;        /* warm off-white "paper" */
+    --bg-light-soft: #ebe6dc;   /* edge of paper for shadows */
+    --accent-blue: #2a4ee0;     /* cobalt blue accent */
+    --accent-soft: #b6c0ff;     /* desaturated cobalt for hints on dark */
+    --text-dark: #0a0e1a;
+    --text-dark-soft: #4a5168;
+    --text-light: #f4f1ea;
+    --text-light-soft: #a9b0c2;
+    --rule-dark: rgba(10, 14, 26, 0.12);
+    --rule-light: rgba(244, 241, 234, 0.12);
+
+    /* Typography (clamp() for viewport fitting) */
+    --title-size: clamp(2rem, 6.5vw, 5rem);
+    --h2-size: clamp(1.2rem, 3vw, 2.2rem);
+    --h3-size: clamp(0.95rem, 2vw, 1.4rem);
+    --body-size: clamp(0.75rem, 1.3vw, 1rem);
+    --small-size: clamp(0.6rem, 0.9vw, 0.78rem);
+    --code-size: clamp(0.65rem, 1.05vw, 0.88rem);
+
+    --slide-padding: clamp(1.25rem, 4vw, 4rem);
+    --content-gap: clamp(0.6rem, 1.6vw, 1.4rem);
+
+    --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+    --duration-normal: 0.7s;
+}
+
+/* ===========================================
+   VIEWPORT BASE (from skill's viewport-base.css)
+   DO NOT REMOVE — keeps every slide locked to 100vh.
+   =========================================== */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; overflow-x: hidden; }
+html { scroll-snap-type: y mandatory; scroll-behavior: smooth; }
+.slide {
+    width: 100vw; height: 100vh; height: 100dvh;
+    overflow: hidden; scroll-snap-align: start;
+    display: flex; flex-direction: column; position: relative;
+}
+.slide-content {
+    flex: 1; display: flex; flex-direction: column;
+    justify-content: center; max-height: 100%; overflow: hidden;
+    padding: var(--slide-padding);
+}
+img, .image-container {
+    max-width: 100%; max-height: min(50vh, 400px); object-fit: contain;
+}
+
+/* Aggressive scaling for smaller viewports */
+@media (max-height: 700px) {
+    :root {
+        --slide-padding: clamp(0.9rem, 3vw, 2.5rem);
+        --title-size: clamp(1.5rem, 5vw, 3.5rem);
+        --h2-size: clamp(1rem, 2.5vw, 1.75rem);
+        --content-gap: clamp(0.4rem, 1.2vw, 1rem);
+    }
+}
+@media (max-height: 600px) {
+    :root {
+        --slide-padding: clamp(0.75rem, 2.5vw, 1.75rem);
+        --title-size: clamp(1.2rem, 4vw, 2.5rem);
+        --h2-size: clamp(0.9rem, 2vw, 1.4rem);
+        --body-size: clamp(0.7rem, 1.1vw, 0.9rem);
+        --code-size: clamp(0.6rem, 0.95vw, 0.78rem);
+    }
+    .nav-dots, .keyboard-hint { display: none; }
+}
+@media (max-height: 500px) {
+    :root {
+        --title-size: clamp(1rem, 3.5vw, 1.75rem);
+        --h2-size: clamp(0.85rem, 1.8vw, 1.2rem);
+    }
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.2s !important;
+    }
+    html { scroll-behavior: auto; }
+}
+
+/* ===========================================
+   GLOBAL BASE
+   =========================================== */
+body {
+    font-family: 'Manrope', sans-serif;
+    background: var(--bg-light);
+    color: var(--text-dark);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+
+/* ===========================================
+   PROGRESS BAR (top edge)
+   =========================================== */
+.progress-bar {
+    position: fixed; top: 0; left: 0;
+    height: 3px;
+    background: var(--accent-blue);
+    z-index: 100;
+    width: 0;
+    transition: width 0.2s ease;
+}
+
+/* ===========================================
+   NAV DOTS (right edge)
+   =========================================== */
+.nav-dots {
+    position: fixed; right: clamp(0.75rem, 1.5vw, 1.5rem);
+    top: 50%; transform: translateY(-50%);
+    display: flex; flex-direction: column;
+    gap: clamp(0.4rem, 0.9vw, 0.7rem);
+    z-index: 50;
+}
+.nav-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--text-dark-soft);
+    opacity: 0.3;
+    border: none; cursor: pointer; padding: 0;
+    transition: all 0.25s ease;
+}
+.nav-dot:hover { opacity: 0.7; }
+.nav-dot.active { opacity: 1; background: var(--accent-blue); transform: scale(1.4); }
+/* When current slide is dark, swap dot color */
+.nav-dots.on-dark .nav-dot { background: var(--text-light-soft); }
+.nav-dots.on-dark .nav-dot.active { background: var(--accent-blue); }
+
+/* ===========================================
+   SHARED CHROME — top brand bar
+   Appears on most content slides.
+   =========================================== */
+.chrome-top {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: clamp(0.9rem, 2vw, 1.5rem) var(--slide-padding) clamp(0.6rem, 1.2vw, 1rem);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--small-size);
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--text-dark-soft);
+}
+.slide.is-dark .chrome-top { color: var(--text-light-soft); }
+.brand-mark { display: flex; align-items: center; gap: clamp(0.4rem, 1vw, 0.75rem); }
+.brand-dot {
+    width: clamp(7px, 0.9vw, 11px); height: clamp(7px, 0.9vw, 11px);
+    background: var(--accent-blue);
+    border-radius: 50%;
+}
+.chrome-track { display: flex; gap: clamp(0.7rem, 2vw, 2rem); }
+.chrome-track span { opacity: 0.5; }
+.chrome-track .active { opacity: 1; color: var(--accent-blue); }
+
+/* Accent stripe — signature Electric Studio element */
+.accent-stripe {
+    position: absolute; left: 0; right: 0;
+    height: 4px;
+    background: var(--accent-blue);
+    transform: scaleX(0);
+    transform-origin: left;
+    z-index: 2;
+}
+.slide.visible .accent-stripe {
+    animation: stripe-in 0.9s 0.1s var(--ease-out-expo) forwards;
+}
+.accent-stripe.top { top: 0; }
+.accent-stripe.bottom { bottom: 0; }
+
+/* Slide number — bottom-right of every content slide */
+.slide-number {
+    position: absolute;
+    bottom: clamp(0.9rem, 2vw, 1.5rem);
+    right: var(--slide-padding);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--small-size);
+    letter-spacing: 0.15em;
+    color: var(--text-dark-soft);
+}
+.slide.is-dark .slide-number { color: var(--text-light-soft); }
+
+/* Dark slide base */
+.slide.is-dark { background: var(--bg-dark); color: var(--text-light); }
+
+/* ===========================================
+   ANIMATIONS — scroll-triggered reveal pattern
+   Elements get .reveal, slide gets .visible when in viewport.
+   =========================================== */
+.reveal {
+    opacity: 0;
+    transform: translateY(28px);
+    transition:
+        opacity var(--duration-normal) var(--ease-out-expo),
+        transform var(--duration-normal) var(--ease-out-expo);
+}
+.slide.visible .reveal { opacity: 1; transform: translateY(0); }
+
+/* Stagger via data attribute or nth-child */
+.slide.visible .reveal[data-delay="1"] { transition-delay: 0.15s; }
+.slide.visible .reveal[data-delay="2"] { transition-delay: 0.30s; }
+.slide.visible .reveal[data-delay="3"] { transition-delay: 0.45s; }
+.slide.visible .reveal[data-delay="4"] { transition-delay: 0.60s; }
+.slide.visible .reveal[data-delay="5"] { transition-delay: 0.75s; }
+.slide.visible .reveal[data-delay="6"] { transition-delay: 0.90s; }
+.slide.visible .reveal[data-delay="7"] { transition-delay: 1.05s; }
+
+/* Text mask reveal (used on titles).
+   padding-bottom gives descenders (g, y, p) room below the baseline —
+   without it, the line-height: 0.94 on .title-xl makes overflow:hidden clip them. */
+.mask { display: block; overflow: hidden; padding-bottom: 0.18em; }
+.mask > span {
+    display: inline-block;
+    transform: translateY(105%);
+    transition: transform 0.9s var(--ease-out-expo);
+}
+.slide.visible .mask > span { transform: translateY(0); }
+.slide.visible .mask[data-delay="1"] > span { transition-delay: 0.20s; }
+.slide.visible .mask[data-delay="2"] > span { transition-delay: 0.35s; }
+.slide.visible .mask[data-delay="3"] > span { transition-delay: 0.50s; }
+
+@keyframes stripe-in { to { transform: scaleX(1); } }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+/* ===========================================
+   TYPOGRAPHY
+   =========================================== */
+h1, h2, h3, h4 { font-family: 'Manrope', sans-serif; line-height: 1; letter-spacing: -0.02em; }
+.eyebrow {
+    display: inline-flex; align-items: center; gap: 0.6rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--small-size);
+    text-transform: uppercase;
+    letter-spacing: 0.25em;
+    color: var(--accent-blue);
+}
+.eyebrow::before {
+    content: ""; width: clamp(20px, 3vw, 36px); height: 1px;
+    background: var(--accent-blue);
+}
+.title-xl {
+    font-family: 'Manrope', sans-serif;
+    font-weight: 800;
+    font-size: var(--title-size);
+    line-height: 0.94;
+    letter-spacing: -0.035em;
+}
+.accent { color: var(--accent-blue); }
+.lead {
+    font-size: var(--h2-size);
+    line-height: 1.35;
+    font-weight: 400;
+    color: var(--text-dark);
+    max-width: 32ch;
+}
+.slide.is-dark .lead { color: var(--text-light); }
+.body {
+    font-size: var(--body-size);
+    line-height: 1.55;
+    color: var(--text-dark-soft);
+    max-width: 60ch;
+}
+.slide.is-dark .body { color: var(--text-light-soft); }
+
+/* ===========================================
+   CODE BLOCKS — used on most technical slides.
+   Dark inset card with JetBrains Mono.
+   =========================================== */
+.code {
+    background: var(--bg-dark);
+    color: var(--text-light);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--code-size);
+    line-height: 1.55;
+    padding: clamp(0.8rem, 1.8vw, 1.5rem) clamp(1rem, 2vw, 1.75rem);
+    border-radius: clamp(4px, 0.6vw, 8px);
+    border-left: 3px solid var(--accent-blue);
+    overflow: hidden;
+    position: relative;
+    white-space: pre;
+}
+.slide.is-dark .code {
+    background: var(--bg-dark-soft);
+    border-left-color: var(--accent-blue);
+}
+.code .c-kw { color: #b6c0ff; }     /* keyword */
+.code .c-fn { color: #ffd28a; }     /* function */
+.code .c-str { color: #98d4bb; }    /* string */
+.code .c-num { color: #f4b8c5; }    /* number */
+.code .c-cm { color: #6b738d; font-style: italic; } /* comment */
+.code .c-ty { color: #a8d8ea; }     /* type */
+.code .c-pun { color: #d4d8e6; }    /* punctuation */
+.code-caption {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--small-size);
+    color: var(--text-dark-soft);
+    letter-spacing: 0.1em;
+    margin-top: clamp(0.4rem, 0.8vw, 0.6rem);
+}
+.slide.is-dark .code-caption { color: var(--text-light-soft); }
+
+/* ===========================================
+   SLIDE 1 — Title slide (signature split)
+   =========================================== */
+.slide-title {
+    display: grid;
+    grid-template-rows: 55% 45%;
+    padding: 0;
+}
+.panel-top {
+    background: var(--bg-light);
+    padding: var(--slide-padding);
+    display: flex; flex-direction: column;
+    justify-content: space-between;
+    position: relative; overflow: hidden;
+}
+.panel-bottom {
+    background: var(--bg-dark);
+    padding: var(--slide-padding);
+    display: flex; align-items: center; justify-content: space-between;
+    color: var(--text-light); position: relative; overflow: hidden;
+}
+.seam {
+    position: absolute; left: 0; right: 0; top: 55%;
+    height: clamp(8px, 1.2vh, 14px);
+    background: var(--accent-blue); z-index: 2;
+    transform: scaleX(0); transform-origin: left;
+}
+.slide-title.visible .seam {
+    animation: stripe-in 0.9s 0.1s var(--ease-out-expo) forwards;
+}
+.title-subtitle {
+    font-size: var(--h2-size);
+    line-height: 1.35;
+    color: var(--text-light);
+    max-width: 28ch;
+    font-weight: 300;
+}
+.title-meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--small-size);
+    color: var(--accent-soft);
+    text-align: right;
+    letter-spacing: 0.1em;
+    line-height: 1.75;
+}
+.title-meta .label { opacity: 0.5; margin-right: 0.5rem; }
+
+/* Decorative geometric mark (rotating arc + circle) */
+.geo-mark {
+    position: absolute;
+    top: clamp(2rem, 5vw, 4rem);
+    right: clamp(2rem, 5vw, 4rem);
+    width: clamp(90px, 13vw, 180px);
+    height: clamp(90px, 13vw, 180px);
+}
+.geo-mark .ring {
+    position: absolute; inset: 0;
+    border: 1px solid var(--rule-dark);
+    border-radius: 50%;
+}
+.geo-mark .arc {
+    position: absolute; inset: 0;
+    border: 2px solid var(--accent-blue);
+    border-color: var(--accent-blue) transparent transparent transparent;
+    border-radius: 50%;
+    animation: spin 20s linear infinite;
+}
+.geo-mark .dot {
+    position: absolute; top: 50%; left: 100%;
+    transform: translate(-50%, -50%);
+    width: clamp(9px, 1.3vw, 14px); height: clamp(9px, 1.3vw, 14px);
+    background: var(--accent-blue); border-radius: 50%;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ===========================================
+   SLIDE 4 — Cast grid (component cards)
+   =========================================== */
+.cast-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(2, 1fr);
+    gap: clamp(0.6rem, 1.4vw, 1.2rem);
+    max-height: 55vh;
+}
+.cast-card {
+    background: var(--bg-light-soft);
+    border: 1px solid var(--rule-dark);
+    border-radius: clamp(4px, 0.6vw, 8px);
+    padding: clamp(0.8rem, 1.8vw, 1.4rem);
+    display: flex; flex-direction: column;
+    gap: clamp(0.4rem, 1vw, 0.7rem);
+    position: relative;
+    overflow: hidden;
+}
+.cast-card .num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--small-size);
+    color: var(--accent-blue);
+    letter-spacing: 0.18em;
+    font-weight: 700;
+}
+.cast-card .name {
+    font-family: 'Manrope', sans-serif;
+    font-weight: 800;
+    font-size: var(--h3-size);
+    color: var(--text-dark);
+    line-height: 1.05;
+}
+.cast-card .file {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--small-size);
+    color: var(--text-dark-soft);
+    margin-top: -0.1rem;
+}
+.cast-card .desc {
+    font-size: var(--body-size);
+    line-height: 1.4;
+    color: var(--text-dark-soft);
+}
+.cast-card.external {
+    background: var(--bg-dark);
+    border-color: var(--bg-dark);
+}
+.cast-card.external .name { color: var(--text-light); }
+.cast-card.external .file { color: var(--accent-soft); }
+.cast-card.external .desc { color: var(--text-light-soft); }
+.cast-card.external .num { color: var(--accent-soft); }
+
+@media (max-width: 800px) {
+    .cast-grid { grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(3, 1fr); }
+}
+
+/* ===========================================
+   SLIDE 5 — Architecture diagram
+   CSS grid laid out to mirror the README diagram.
+   =========================================== */
+/* CLI sits on the left, Agent and everything it spawns is a stacked
+   tree on the right. The tree uses a 2-col sub-grid so the down-arrows
+   sit directly above the boxes they point to. */
+.arch {
+    display: flex;
+    align-items: flex-start; /* keep CLI + user-input arrow level with Agent at top */
+    justify-content: center;
+    gap: clamp(0.8rem, 2.5vw, 2.5rem);
+    max-width: 1100px;
+    margin: 0 auto;
+}
+/* The "user input ───▶" label has no padding, so nudge it down to sit
+   on the centerline of the CLI and Agent boxes. */
+.arch > .arrow-label { padding-top: clamp(0.7rem, 1.5vw, 1.1rem); }
+.arch-tree {
+    display: flex;
+    flex-direction: column;
+    gap: clamp(0.4rem, 1vw, 0.8rem);
+    width: clamp(300px, 40vw, 500px);
+}
+.arch-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: clamp(0.8rem, 2vw, 1.5rem);
+    justify-items: center;
+    align-items: center;
+}
+.arch-row.arrows { gap: clamp(0.8rem, 2vw, 1.5rem); }
+.arch-row > .box { width: 100%; }
+.box {
+    background: var(--bg-light);
+    border: 1.5px solid var(--text-dark);
+    border-radius: clamp(3px, 0.5vw, 6px);
+    padding: clamp(0.5rem, 1.2vw, 0.9rem) clamp(0.7rem, 1.6vw, 1.2rem);
+    text-align: center;
+    min-width: clamp(120px, 18vw, 200px);
+}
+/* Agent spans the full tree width as a layout cue — its prominence
+   comes from position and span, not color. */
+.box.agent { width: 100%; }
+.box .box-name {
+    font-family: 'Manrope', sans-serif;
+    font-weight: 700;
+    font-size: var(--body-size);
+    color: var(--text-dark);
+    line-height: 1.1;
+}
+.box .box-file {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--small-size);
+    color: var(--text-dark-soft);
+    margin-top: 0.2rem;
+}
+.box.ext {
+    border-style: dashed;
+    border-color: var(--accent-blue);
+    background: transparent;
+}
+.box.ext .box-name { color: var(--accent-blue); }
+.box.ext .box-file { color: var(--accent-blue); opacity: 0.7; }
+
+/* All boxes transition smoothly when the trace pulses through them. */
+.box {
+    transition: border-color 0.25s ease, box-shadow 0.25s ease,
+                background 0.25s ease, transform 0.25s ease;
+}
+.box.flowing {
+    border-color: var(--accent-blue);
+    box-shadow: 0 0 0 4px rgba(42, 78, 224, 0.18),
+                0 0 32px rgba(42, 78, 224, 0.45);
+    transform: scale(1.04);
+    z-index: 2;
+}
+.box.ext.flowing {
+    background: rgba(42, 78, 224, 0.06);
+}
+.arrow { transition: color 0.25s ease, opacity 0.25s ease; }
+.arrow-label { transition: color 0.25s ease; }
+.arrow.flowing, .arrow-label.flowing {
+    color: var(--accent-blue);
+    opacity: 1;
+    text-shadow: 0 0 12px rgba(42, 78, 224, 0.6);
+}
+
+/* Caption + replay button live just below the diagram. */
+.flow-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: clamp(0.5rem, 1vw, 0.8rem);
+    margin-top: clamp(0.8rem, 2vw, 1.4rem);
+}
+.flow-caption {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--small-size);
+    color: var(--text-dark-soft);
+    letter-spacing: 0.05em;
+    text-align: center;
+    min-height: 1.4em;
+    max-width: 70ch;
+}
+.flow-caption .flow-arrow {
+    color: var(--accent-blue);
+    font-weight: 700;
+    margin-right: 0.4rem;
+}
+.flow-btn {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--small-size);
+    background: transparent;
+    border: 1px solid var(--text-dark);
+    color: var(--text-dark);
+    padding: 0.45rem 1.1rem;
+    cursor: pointer;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    border-radius: 3px;
+    transition: all 0.2s ease;
+}
+.flow-btn:hover:not(:disabled) {
+    background: var(--accent-blue);
+    color: var(--text-light);
+    border-color: var(--accent-blue);
+}
+.flow-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.arrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--code-size);
+    color: var(--accent-blue);
+    font-weight: 700;
+}
+.arrow-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--small-size);
+    color: var(--text-dark-soft);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    text-align: center;
+}
+
+/* ===========================================
+   SLIDE 6 — Four-step overview
+   =========================================== */
+.steps-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: clamp(0.6rem, 1.5vw, 1.2rem);
+    align-items: stretch;
+}
+.step-card {
+    background: var(--bg-light-soft);
+    border-top: 3px solid var(--accent-blue);
+    padding: clamp(0.9rem, 1.8vw, 1.4rem);
+    display: flex; flex-direction: column;
+    gap: clamp(0.4rem, 0.9vw, 0.6rem);
+}
+.step-card .step-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    font-size: clamp(1.5rem, 3vw, 2.2rem);
+    color: var(--accent-blue);
+    line-height: 1;
+}
+.step-card .step-title {
+    font-family: 'Manrope', sans-serif;
+    font-weight: 700;
+    font-size: var(--h3-size);
+    color: var(--text-dark);
+    line-height: 1.15;
+}
+.step-card .step-body {
+    font-size: var(--body-size);
+    line-height: 1.45;
+    color: var(--text-dark-soft);
+}
+
+/* ===========================================
+   STEP SLIDES (7–13) — text on left, code on right
+   =========================================== */
+.split-content {
+    display: grid;
+    grid-template-columns: 1fr 1.15fr;
+    gap: clamp(1rem, 3vw, 3rem);
+    align-items: center;
+    flex: 1;
+}
+@media (max-width: 800px) {
+    .split-content { grid-template-columns: 1fr; gap: clamp(0.5rem, 1.5vw, 1.5rem); }
+}
+.split-left { display: flex; flex-direction: column; gap: clamp(0.5rem, 1.2vw, 1rem); }
+.split-left h2 {
+    font-family: 'Manrope', sans-serif;
+    font-weight: 800;
+    font-size: var(--title-size);
+    line-height: 0.95;
+    color: var(--text-dark);
+}
+.slide.is-dark .split-left h2 { color: var(--text-light); }
+.split-left .step-id {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--small-size);
+    color: var(--accent-blue);
+    letter-spacing: 0.25em;
+}
+.split-left .body { margin-top: clamp(0.3rem, 0.8vw, 0.6rem); }
+.split-right { display: flex; flex-direction: column; gap: clamp(0.3rem, 0.6vw, 0.5rem); }
+.callout {
+    margin-top: clamp(0.5rem, 1.2vw, 1rem);
+    padding: clamp(0.6rem, 1.3vw, 1rem);
+    background: rgba(42, 78, 224, 0.08);
+    border-left: 2px solid var(--accent-blue);
+    font-size: var(--small-size);
+    line-height: 1.5;
+    color: var(--text-dark);
+    font-family: 'JetBrains Mono', monospace;
+}
+.slide.is-dark .callout {
+    background: rgba(182, 192, 255, 0.08);
+    color: var(--text-light);
+}
+
+/* ===========================================
+   SLIDE 10 — LLM response (two outcome cards)
+   =========================================== */
+.outcomes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: clamp(1rem, 2.5vw, 2rem);
+    flex: 1; align-items: stretch;
+}
+.outcome-card {
+    background: var(--bg-light-soft);
+    border-radius: clamp(4px, 0.6vw, 8px);
+    padding: clamp(1rem, 2vw, 1.5rem);
+    display: flex; flex-direction: column;
+    gap: clamp(0.5rem, 1.2vw, 1rem);
+    border-top: 4px solid var(--accent-blue);
+}
+.outcome-card .outcome-tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--small-size);
+    text-transform: uppercase;
+    letter-spacing: 0.25em;
+    color: var(--accent-blue);
+    font-weight: 700;
+}
+.outcome-card .outcome-title {
+    font-family: 'Manrope', sans-serif;
+    font-weight: 800;
+    font-size: var(--h2-size);
+    color: var(--text-dark);
+    line-height: 1.1;
+}
+.outcome-card .outcome-body {
+    font-size: var(--body-size);
+    line-height: 1.5;
+    color: var(--text-dark-soft);
+}
+
+/* ===========================================
+   SLIDE 14 — End-to-end trace (vertical timeline)
+   =========================================== */
+.trace {
+    display: grid;
+    grid-template-columns: clamp(80px, 14vw, 140px) 1fr clamp(120px, 18vw, 200px);
+    gap: 0 clamp(0.8rem, 2vw, 1.5rem);
+    align-items: stretch;
+    max-width: 1100px;
+    margin: 0 auto;
+    width: 100%;
+}
+.trace-row {
+    display: contents;
+}
+.trace-actor {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--small-size);
+    color: var(--accent-blue);
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    text-align: right;
+    padding-top: clamp(0.4rem, 0.9vw, 0.7rem);
+    border-right: 1px solid var(--rule-light);
+    padding-right: clamp(0.6rem, 1.4vw, 1rem);
+}
+.slide.is-dark .trace-actor { color: var(--accent-soft); }
+.trace-event {
+    padding: clamp(0.4rem, 0.9vw, 0.7rem) 0;
+    font-size: var(--body-size);
+    line-height: 1.4;
+    color: var(--text-light);
+    border-bottom: 1px dashed var(--rule-light);
+    position: relative;
+}
+.trace-event::before {
+    content: ""; position: absolute;
+    left: clamp(-0.95rem, -1.5vw, -0.55rem);
+    top: clamp(0.7rem, 1.4vw, 1.1rem);
+    width: 8px; height: 8px;
+    background: var(--accent-blue);
+    border-radius: 50%;
+}
+.trace-event strong { color: #ffd28a; font-weight: 600; }
+.trace-event code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.95em;
+    color: #b6c0ff;
+}
+.trace-arrow {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--small-size);
+    color: var(--text-light-soft);
+    padding-top: clamp(0.5rem, 1vw, 0.8rem);
+    text-align: left;
+}
+
+/* ===========================================
+   SLIDE 15 — Two big design ideas (two-column)
+   =========================================== */
+.ideas {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: clamp(1.5rem, 4vw, 4rem);
+    align-items: start;
+    flex: 1;
+}
+.idea {
+    display: flex; flex-direction: column;
+    gap: clamp(0.5rem, 1.2vw, 1rem);
+    padding-left: clamp(0.6rem, 1.4vw, 1.2rem);
+    border-left: 2px solid var(--accent-blue);
+}
+.idea .idea-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    font-size: clamp(2rem, 4vw, 3rem);
+    color: var(--accent-blue);
+    line-height: 1;
+}
+.idea .idea-title {
+    font-family: 'Manrope', sans-serif;
+    font-weight: 800;
+    font-size: var(--h2-size);
+    color: var(--text-dark);
+    line-height: 1.1;
+}
+.idea .idea-body {
+    font-size: var(--body-size);
+    line-height: 1.55;
+    color: var(--text-dark-soft);
+}
+
+/* ===========================================
+   SLIDE 16 — Safety / sharp edges (bullet list)
+   =========================================== */
+.bullets {
+    display: flex; flex-direction: column;
+    gap: clamp(0.6rem, 1.4vw, 1.2rem);
+    max-width: 70ch;
+}
+.bullet-item {
+    display: grid;
+    grid-template-columns: clamp(28px, 4vw, 44px) 1fr;
+    gap: clamp(0.5rem, 1.2vw, 1rem);
+    align-items: start;
+}
+.bullet-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 700;
+    font-size: var(--body-size);
+    color: var(--accent-blue);
+    padding-top: 0.15rem;
+}
+.bullet-body {
+    font-size: var(--body-size);
+    line-height: 1.5;
+    color: var(--text-light);
+}
+.bullet-body strong { color: #ffd28a; font-weight: 600; }
+
+/* ===========================================
+   SLIDE 17 — File pointers grid
+   =========================================== */
+.files {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: clamp(0.6rem, 1.4vw, 1rem);
+    max-width: 950px;
+    margin: 0 auto;
+    width: 100%;
+}
+.file-row {
+    display: grid;
+    grid-template-columns: clamp(150px, 22vw, 240px) 1fr;
+    gap: clamp(0.6rem, 1.5vw, 1.2rem);
+    padding: clamp(0.7rem, 1.4vw, 1rem);
+    background: var(--bg-light-soft);
+    border-left: 3px solid var(--accent-blue);
+    align-items: baseline;
+}
+.file-row .fp {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--body-size);
+    color: var(--text-dark);
+    font-weight: 700;
+}
+.file-row .fd {
+    font-family: 'Manrope', sans-serif;
+    font-size: var(--body-size);
+    color: var(--text-dark-soft);
+    line-height: 1.4;
+}
+.file-row.featured {
+    background: var(--bg-dark);
+    grid-column: span 2;
+    border-left-color: #ffd28a;
+}
+.file-row.featured .fp { color: #ffd28a; }
+.file-row.featured .fd { color: var(--text-light); }
+
+/* Closing CTA */
+.cta-line {
+    margin-top: clamp(0.8rem, 2vw, 1.5rem);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--body-size);
+    color: var(--accent-blue);
+    letter-spacing: 0.1em;
+    text-align: center;
+}
+
+/* ===========================================
+   Section number (top-left, on most content slides)
+   =========================================== */
+.section-num {
+    position: absolute;
+    top: clamp(3.5rem, 6vw, 5rem);
+    left: var(--slide-padding);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--small-size);
+    letter-spacing: 0.25em;
+    color: var(--accent-blue);
+    text-transform: uppercase;
+    font-weight: 700;
+}
+
+/* Keyboard hint (bottom-left, fades after first interaction) */
+.keyboard-hint {
+    position: fixed;
+    bottom: clamp(0.75rem, 1.5vw, 1.25rem);
+    left: clamp(0.75rem, 1.5vw, 1.25rem);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--small-size);
+    color: var(--text-dark-soft);
+    letter-spacing: 0.12em;
+    opacity: 0.6;
+    z-index: 50;
+    transition: opacity 0.4s ease;
+}
+.keyboard-hint.on-dark { color: var(--text-light-soft); }
+.keyboard-hint.hidden { opacity: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+
+<!-- ===========================================
+     CHROME — progress bar, nav dots, keyboard hint
+     =========================================== -->
+<div class="progress-bar" id="progressBar"></div>
+<nav class="nav-dots" id="navDots" aria-label="slide navigation"></nav>
+<div class="keyboard-hint" id="keyboardHint">↑ ↓  ·  SPACE  ·  CLICK DOTS</div>
+
+<!-- ===========================================
+     SLIDE 1 — Title
+     Signature split layout. Top: title on cream.
+     Bottom: subtitle + run metadata on dark navy.
+     =========================================== -->
+<section class="slide slide-title" data-bg="split">
+    <div class="seam"></div>
+    <div class="panel-top">
+        <div class="chrome-top" style="padding: 0;">
+            <div class="brand-mark"><span class="brand-dot"></span> JIRA-AGENT // FIELD GUIDE</div>
+            <div class="chrome-track">
+                <span class="active">01 CAST</span>
+                <span>02 FLOW</span>
+                <span>03 TOOLS</span>
+                <span>04 SAFETY</span>
+            </div>
+        </div>
+        <div>
+            <div class="eyebrow reveal" data-delay="1">Beginner's Guide</div>
+            <h1 class="title-xl" style="margin-top: clamp(0.5rem, 1.5vw, 1rem);">
+                <span class="mask" data-delay="1"><span>From Sentence</span></span>
+                <span class="mask" data-delay="2"><span>to <span class="accent">Side Effect</span>.</span></span>
+            </h1>
+        </div>
+        <div class="geo-mark">
+            <div class="ring"></div>
+            <div class="arc"></div>
+            <div class="dot"></div>
+        </div>
+    </div>
+    <div class="panel-bottom">
+        <p class="title-subtitle reveal" data-delay="3">
+            Tracing an AI agent from
+            <strong style="font-weight: 600;">a typed sentence</strong>
+            to <strong style="font-weight: 600;">a real Jira write</strong>.
+        </p>
+        <div class="title-meta reveal" data-delay="4">
+            <span style="display:block;"><span class="label">stack</span> python · openai sdk · httpx</span>
+            <span style="display:block;"><span class="label">model</span> gemma-4-31b via openrouter</span>
+            <span style="display:block;"><span class="label">target</span> atlassian cloud rest v3</span>
+        </div>
+    </div>
+</section>
+
+<!-- ===========================================
+     SLIDE 2 — What is an AI agent?
+     Definition. Distinction between chatbot and agent.
+     =========================================== -->
+<section class="slide" data-bg="light">
+    <div class="accent-stripe top"></div>
+    <div class="chrome-top">
+        <div class="brand-mark"><span class="brand-dot"></span> JIRA-AGENT // FIELD GUIDE</div>
+        <div class="chrome-track">
+            <span class="active">01 CAST</span>
+            <span>02 FLOW</span>
+            <span>03 TOOLS</span>
+            <span>04 SAFETY</span>
+        </div>
+    </div>
+    <div class="section-num">§ 01 / CAST</div>
+    <div class="slide-content">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: clamp(2rem, 5vw, 4rem); align-items: center;">
+            <div>
+                <div class="eyebrow reveal" data-delay="1">Definition</div>
+                <h2 class="title-xl reveal" data-delay="2" style="margin-top: clamp(0.5rem, 1.2vw, 1rem);">
+                    What's an<br><span class="accent">AI agent?</span>
+                </h2>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: clamp(0.8rem, 2vw, 1.5rem);">
+                <p class="lead reveal" data-delay="3">
+                    A chatbot <em>answers</em>. An agent <em>acts</em>.
+                </p>
+                <p class="body reveal" data-delay="4">
+                    Three things, glued together by a loop:
+                </p>
+                <div class="reveal" data-delay="5" style="display: flex; flex-direction: column; gap: clamp(0.4rem, 1vw, 0.7rem);">
+                    <div style="display: grid; grid-template-columns: clamp(28px, 4vw, 40px) 1fr; gap: 0.75rem; align-items: baseline;">
+                        <span style="font-family: 'JetBrains Mono', monospace; color: var(--accent-blue); font-weight: 700; font-size: var(--body-size);">01</span>
+                        <span class="body" style="color: var(--text-dark);"><strong>An LLM</strong> that can decide what to do next.</span>
+                    </div>
+                    <div style="display: grid; grid-template-columns: clamp(28px, 4vw, 40px) 1fr; gap: 0.75rem; align-items: baseline;">
+                        <span style="font-family: 'JetBrains Mono', monospace; color: var(--accent-blue); font-weight: 700; font-size: var(--body-size);">02</span>
+                        <span class="body" style="color: var(--text-dark);"><strong>Tools</strong> &mdash; named functions it can call on the outside world.</span>
+                    </div>
+                    <div style="display: grid; grid-template-columns: clamp(28px, 4vw, 40px) 1fr; gap: 0.75rem; align-items: baseline;">
+                        <span style="font-family: 'JetBrains Mono', monospace; color: var(--accent-blue); font-weight: 700; font-size: var(--body-size);">03</span>
+                        <span class="body" style="color: var(--text-dark);"><strong>A runtime</strong> that runs the tools and feeds the results back.</span>
+                    </div>
+                </div>
+                <p class="body reveal" data-delay="6" style="font-style: italic;">
+                    That's it. The rest is plumbing.
+                </p>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">02 / 17</div>
+</section>
+
+<!-- ===========================================
+     SLIDE 3 — Meet the example
+     jira-agent: what we're going to dissect.
+     =========================================== -->
+<section class="slide is-dark" data-bg="dark">
+    <div class="accent-stripe top"></div>
+    <div class="chrome-top">
+        <div class="brand-mark"><span class="brand-dot"></span> JIRA-AGENT // FIELD GUIDE</div>
+        <div class="chrome-track">
+            <span class="active">01 CAST</span>
+            <span>02 FLOW</span>
+            <span>03 TOOLS</span>
+            <span>04 SAFETY</span>
+        </div>
+    </div>
+    <div class="section-num">§ 01 / CAST</div>
+    <div class="slide-content">
+        <div style="display: grid; grid-template-columns: 0.85fr 1.15fr; gap: clamp(1.5rem, 4vw, 3rem); align-items: center;">
+            <div>
+                <div class="eyebrow reveal" data-delay="1">The Specimen</div>
+                <h2 class="title-xl reveal" data-delay="2" style="margin-top: clamp(0.5rem, 1.2vw, 1rem); color: var(--text-light);">
+                    Meet<br><span class="accent">jira-agent.</span>
+                </h2>
+                <p class="body reveal" data-delay="3" style="color: var(--text-light-soft); margin-top: clamp(0.8rem, 1.5vw, 1.2rem);">
+                    A tiny Python CLI that drives a real Atlassian Cloud Jira instance from natural language. The whole thing is small enough to read in twenty minutes.
+                </p>
+            </div>
+            <div class="reveal" data-delay="4">
+<pre class="code">$ uv run jira-agent
+Jira agent ready. Model: google/gemma-4-31b-it:free
+Type a request. Ctrl+D or /exit to quit.
+
+<span class="c-pun">&gt;</span> Create a P1 bug in SCRUM called <span class="c-str">"Login</span>
+<span class="c-str">  page hangs on submit"</span> with description
+<span class="c-str">  "Users report a 30s delay on Safari."</span>
+  <span class="c-cm">-&gt; create_issue({"project_key": "SCRUM",</span>
+<span class="c-cm">      "summary": "Login page hangs on submit",</span>
+<span class="c-cm">      "priority": "Highest", ...})</span>
+  <span class="c-cm">&lt;- ok: {"id": "10005", "key": "SCRUM-6"}</span>
+
+<span class="c-kw">Created P1 bug SCRUM-6: "Login page hangs on submit".</span></pre>
+                <div class="code-caption">a single turn — input, tool call, reply</div>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">03 / 17</div>
+</section>
+
+<!-- ===========================================
+     SLIDE 4 — The cast (6-card grid)
+     One card per architectural component.
+     =========================================== -->
+<section class="slide" data-bg="light">
+    <div class="accent-stripe top"></div>
+    <div class="chrome-top">
+        <div class="brand-mark"><span class="brand-dot"></span> JIRA-AGENT // FIELD GUIDE</div>
+        <div class="chrome-track">
+            <span>01 CAST</span>
+            <span class="active">02 FLOW</span>
+            <span>03 TOOLS</span>
+            <span>04 SAFETY</span>
+        </div>
+    </div>
+    <div class="section-num">§ 02 / FLOW</div>
+    <div class="slide-content">
+        <div style="display: flex; flex-direction: column; gap: clamp(0.8rem, 2vw, 1.5rem); flex: 1;">
+            <div>
+                <div class="eyebrow reveal" data-delay="1">Dramatis Personae</div>
+                <h2 class="title-xl reveal" data-delay="2" style="font-size: clamp(1.5rem, 4vw, 3rem); margin-top: clamp(0.3rem, 0.8vw, 0.6rem);">
+                    The cast.
+                </h2>
+            </div>
+            <div class="cast-grid">
+                <div class="cast-card reveal" data-delay="1">
+                    <div class="num">01 // PROCESS</div>
+                    <div class="name">CLI</div>
+                    <div class="file">src/jira_agent/cli.py</div>
+                    <div class="desc">Reads lines, prints replies. Hands every input straight to the Agent.</div>
+                </div>
+                <div class="cast-card reveal" data-delay="2">
+                    <div class="num">02 // PROCESS</div>
+                    <div class="name">Agent</div>
+                    <div class="file">src/jira_agent/agent.py</div>
+                    <div class="desc">The tool-calling loop. The heart of the project — about 40 lines.</div>
+                </div>
+                <div class="cast-card reveal" data-delay="3">
+                    <div class="num">03 // PROCESS</div>
+                    <div class="name">LLMClient</div>
+                    <div class="file">src/jira_agent/llm.py</div>
+                    <div class="desc">A thin wrapper over the OpenAI SDK. Provider-neutral.</div>
+                </div>
+                <div class="cast-card reveal" data-delay="4">
+                    <div class="num">04 // PROCESS</div>
+                    <div class="name">tools.py</div>
+                    <div class="file">src/jira_agent/tools.py</div>
+                    <div class="desc">Five tool schemas for the LLM + a dispatch function that runs them.</div>
+                </div>
+                <div class="cast-card reveal" data-delay="5">
+                    <div class="num">05 // PROCESS</div>
+                    <div class="name">JiraClient</div>
+                    <div class="file">src/jira_agent/jira_client.py</div>
+                    <div class="desc">A small httpx wrapper for Jira REST v3. The only thing that talks HTTPS.</div>
+                </div>
+                <div class="cast-card external reveal" data-delay="6">
+                    <div class="num">EXTERNAL</div>
+                    <div class="name">LLM &amp; Jira Cloud</div>
+                    <div class="file">openrouter.ai · atlassian.net</div>
+                    <div class="desc">The two networked services. Everything else is local Python.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">04 / 17</div>
+</section>
+
+<!-- ===========================================
+     SLIDE 5 — Architecture diagram
+     CSS-grid rendering of the README diagram.
+     =========================================== -->
+<section class="slide" data-bg="light">
+    <div class="accent-stripe top"></div>
+    <div class="chrome-top">
+        <div class="brand-mark"><span class="brand-dot"></span> JIRA-AGENT // FIELD GUIDE</div>
+        <div class="chrome-track">
+            <span>01 CAST</span>
+            <span class="active">02 FLOW</span>
+            <span>03 TOOLS</span>
+            <span>04 SAFETY</span>
+        </div>
+    </div>
+    <div class="section-num">§ 02 / FLOW</div>
+    <div class="slide-content">
+        <div style="display: flex; flex-direction: column; gap: clamp(0.6rem, 1.5vw, 1.2rem); flex: 1; justify-content: center;">
+            <div>
+                <div class="eyebrow reveal" data-delay="1">Wiring</div>
+                <h2 class="title-xl reveal" data-delay="2" style="font-size: clamp(1.5rem, 4vw, 3rem); margin-top: clamp(0.3rem, 0.8vw, 0.6rem);">
+                    How the pieces<br>are wired together.
+                </h2>
+            </div>
+            <!-- The architecture diagram. Boxed = code; dashed = external.
+                 CLI sits left; the Agent tree on the right uses a 2-col
+                 sub-grid so each down-arrow lines up over its child.
+                 data-trace-id on each box/arrow is the hook the trace
+                 animation uses to pulse the component as the data flows. -->
+            <div class="arch reveal" data-delay="3" id="archDiagram">
+                <div class="box" data-trace-id="cli">
+                    <div class="box-name">CLI</div>
+                    <div class="box-file">cli.py</div>
+                </div>
+                <div class="arrow-label" data-trace-id="cli-agent">user input ────▶</div>
+                <div class="arch-tree">
+                    <div class="box agent" data-trace-id="agent">
+                        <div class="box-name">Agent</div>
+                        <div class="box-file">agent.py · the loop</div>
+                    </div>
+                    <div class="arch-row arrows">
+                        <span class="arrow" data-trace-id="agent-llm">▼</span>
+                        <span class="arrow" data-trace-id="agent-tools">▼</span>
+                    </div>
+                    <div class="arch-row">
+                        <div class="box" data-trace-id="llm">
+                            <div class="box-name">LLMClient</div>
+                            <div class="box-file">llm.py</div>
+                        </div>
+                        <div class="box" data-trace-id="tools">
+                            <div class="box-name">tools.py</div>
+                            <div class="box-file">HANDLERS · dispatch</div>
+                        </div>
+                    </div>
+                    <div class="arch-row arrows">
+                        <span class="arrow" data-trace-id="llm-openrouter">▼</span>
+                        <span class="arrow" data-trace-id="tools-jira">▼</span>
+                    </div>
+                    <div class="arch-row">
+                        <div class="box ext" data-trace-id="openrouter">
+                            <div class="box-name">OpenRouter</div>
+                            <div class="box-file">→ upstream LLM</div>
+                        </div>
+                        <div class="box" data-trace-id="jira">
+                            <div class="box-name">JiraClient</div>
+                            <div class="box-file">jira_client.py</div>
+                        </div>
+                    </div>
+                    <div class="arch-row arrows">
+                        <span class="arrow" data-trace-id="openrouter-upstream">▼</span>
+                        <span class="arrow" data-trace-id="jira-atlassian">▼</span>
+                    </div>
+                    <div class="arch-row">
+                        <div class="box ext" data-trace-id="upstream">
+                            <div class="box-name">Upstream LLM</div>
+                            <div class="box-file">e.g. google ai studio</div>
+                        </div>
+                        <div class="box ext" data-trace-id="atlassian">
+                            <div class="box-name">Atlassian Cloud</div>
+                            <div class="box-file">REST API v3</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- Trace player: pulses each component in turn, narrating the
+                 example "Assign SCRUM-6 to me" turn end-to-end. -->
+            <div class="flow-meta reveal" data-delay="4">
+                <div class="flow-caption" id="flowCaption">
+                    <span class="flow-arrow">▶</span>Press play to trace <em>"Assign SCRUM-6 to me"</em> through the system.
+                </div>
+                <button type="button" class="flow-btn" id="flowPlayBtn">▶ Play trace</button>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">05 / 17</div>
+</section>
+
+<!-- ===========================================
+     SLIDE 6 — A turn in four steps (overview)
+     The loop summarized in four cards.
+     =========================================== -->
+<section class="slide is-dark" data-bg="dark">
+    <div class="accent-stripe top"></div>
+    <div class="chrome-top">
+        <div class="brand-mark"><span class="brand-dot"></span> JIRA-AGENT // FIELD GUIDE</div>
+        <div class="chrome-track">
+            <span>01 CAST</span>
+            <span class="active">02 FLOW</span>
+            <span>03 TOOLS</span>
+            <span>04 SAFETY</span>
+        </div>
+    </div>
+    <div class="section-num">§ 02 / FLOW</div>
+    <div class="slide-content">
+        <div style="display: flex; flex-direction: column; gap: clamp(1rem, 2.5vw, 1.8rem); flex: 1; justify-content: center;">
+            <div>
+                <div class="eyebrow reveal" data-delay="1">The Loop</div>
+                <h2 class="title-xl reveal" data-delay="2" style="font-size: clamp(1.5rem, 4vw, 3rem); margin-top: clamp(0.3rem, 0.8vw, 0.6rem); color: var(--text-light);">
+                    One turn, in four steps.
+                </h2>
+            </div>
+            <div class="steps-row reveal" data-delay="3" style="background: var(--bg-dark-soft); border-radius: clamp(4px, 0.6vw, 8px); padding: clamp(0.4rem, 1vw, 0.7rem);">
+                <div class="step-card" style="background: var(--bg-dark); color: var(--text-light);">
+                    <div class="step-num">01</div>
+                    <div class="step-title" style="color: var(--text-light);">Ask the model.</div>
+                    <div class="step-body" style="color: var(--text-light-soft);">Send the whole conversation history plus the available tool schemas.</div>
+                </div>
+                <div class="step-card" style="background: var(--bg-dark); color: var(--text-light);">
+                    <div class="step-num">02</div>
+                    <div class="step-title" style="color: var(--text-light);">Read its reply.</div>
+                    <div class="step-body" style="color: var(--text-light-soft);">If it's plain text — print it, done. If it's a tool call — keep going.</div>
+                </div>
+                <div class="step-card" style="background: var(--bg-dark); color: var(--text-light);">
+                    <div class="step-num">03</div>
+                    <div class="step-title" style="color: var(--text-light);">Run the tool.</div>
+                    <div class="step-body" style="color: var(--text-light-soft);">Dispatch to a Python function, hit Jira, capture the result.</div>
+                </div>
+                <div class="step-card" style="background: var(--bg-dark); color: var(--text-light);">
+                    <div class="step-num">04</div>
+                    <div class="step-title" style="color: var(--text-light);">Loop back.</div>
+                    <div class="step-body" style="color: var(--text-light-soft);">Append the result to history, go back to step 1. Cap at 6 iterations.</div>
+                </div>
+            </div>
+            <p class="body reveal" data-delay="4" style="color: var(--text-light-soft); text-align: center; max-width: 60ch; margin: 0 auto;">
+                The next ten slides are the same loop, slowed down so you can see each frame.
+            </p>
+        </div>
+    </div>
+    <div class="slide-number">06 / 17</div>
+</section>
+
+<!-- ===========================================
+     SLIDE 7 — Step 1: CLI
+     The REPL. Reads input, prints reply.
+     =========================================== -->
+<section class="slide" data-bg="light">
+    <div class="accent-stripe top"></div>
+    <div class="chrome-top">
+        <div class="brand-mark"><span class="brand-dot"></span> JIRA-AGENT // FIELD GUIDE</div>
+        <div class="chrome-track">
+            <span>01 CAST</span>
+            <span class="active">02 FLOW</span>
+            <span>03 TOOLS</span>
+            <span>04 SAFETY</span>
+        </div>
+    </div>
+    <div class="section-num">§ 02 / FLOW · STEP 01</div>
+    <div class="slide-content">
+        <div class="split-content">
+            <div class="split-left">
+                <div class="step-id reveal" data-delay="1">STEP 01 — INPUT</div>
+                <h2 class="reveal" data-delay="2">The <span class="accent">CLI</span>.<br>Where words come in.</h2>
+                <p class="body reveal" data-delay="3">
+                    <code style="font-family: 'JetBrains Mono', monospace;">cli.py</code> is the simplest piece. A <code style="font-family: 'JetBrains Mono', monospace;">while True</code> over <code style="font-family: 'JetBrains Mono', monospace;">input()</code>, with <code style="font-family: 'JetBrains Mono', monospace;">readline</code> patched in so the up-arrow recalls previous lines.
+                </p>
+                <p class="body reveal" data-delay="4">
+                    It doesn't know anything about LLMs or Jira. It just gives every line to <code style="font-family: 'JetBrains Mono', monospace;">Agent.chat()</code> and prints whatever comes back.
+                </p>
+                <div class="callout reveal" data-delay="5">
+                    <strong style="color: var(--accent-blue);">// observer pattern</strong><br>
+                    <code>Agent.chat()</code> itself never prints. The CLI passes an <code>on_tool_call</code> callback when it constructs the Agent, and the agent invokes it after every tool result — that's where the <code>-&gt;</code> and <code>&lt;-</code> trace lines come from. Swap in a different UI, swap in a different callback.
+                </div>
+            </div>
+            <div class="split-right reveal" data-delay="3">
+<pre class="code"><span class="c-cm"># cli.py — the entire REPL</span>
+<span class="c-kw">while True</span><span class="c-pun">:</span>
+    <span class="c-ty">user_input</span> <span class="c-pun">=</span> <span class="c-fn">input</span><span class="c-pun">(</span><span class="c-str">"&gt; "</span><span class="c-pun">).</span><span class="c-fn">strip</span><span class="c-pun">()</span>
+    <span class="c-kw">if not</span> <span class="c-ty">user_input</span><span class="c-pun">:</span>
+        <span class="c-kw">continue</span>
+    <span class="c-kw">if</span> <span class="c-ty">user_input</span> <span class="c-kw">in</span> <span class="c-pun">{</span><span class="c-str">"/exit"</span><span class="c-pun">,</span> <span class="c-str">"/quit"</span><span class="c-pun">}:</span>
+        <span class="c-kw">break</span>
+    <span class="c-ty">reply</span> <span class="c-pun">=</span> <span class="c-ty">agent</span><span class="c-pun">.</span><span class="c-fn">chat</span><span class="c-pun">(</span><span class="c-ty">user_input</span><span class="c-pun">)</span>
+    <span class="c-fn">print</span><span class="c-pun">(</span><span class="c-ty">reply</span><span class="c-pun">)</span></pre>
+                <div class="code-caption">// blank line ⇒ no-op (matches python repl)</div>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">07 / 17</div>
+</section>
+
+<!-- ===========================================
+     SLIDE 8 — Step 2: Agent.chat() loop
+     Pseudocode of the loop.
+     =========================================== -->
+<section class="slide is-dark" data-bg="dark">
+    <div class="accent-stripe top"></div>
+    <div class="chrome-top">
+        <div class="brand-mark"><span class="brand-dot"></span> JIRA-AGENT // FIELD GUIDE</div>
+        <div class="chrome-track">
+            <span>01 CAST</span>
+            <span class="active">02 FLOW</span>
+            <span>03 TOOLS</span>
+            <span>04 SAFETY</span>
+        </div>
+    </div>
+    <div class="section-num">§ 02 / FLOW · STEP 02</div>
+    <div class="slide-content">
+        <div class="split-content">
+            <div class="split-left">
+                <div class="step-id reveal" data-delay="1">STEP 02 — DECIDE</div>
+                <h2 class="reveal" data-delay="2">The <span class="accent">Agent</span> loop.<br>The heart of it all.</h2>
+                <p class="body reveal" data-delay="3" style="color: var(--text-light-soft);">
+                    Every chat turn drives this loop. It runs until the model produces a plain-text reply — or hits the safety bound at six iterations.
+                </p>
+                <p class="body reveal" data-delay="4" style="color: var(--text-light-soft);">
+                    Conversation history lives on the <code style="font-family: 'JetBrains Mono', monospace; color: var(--accent-soft);">Agent</code> instance. That's how multi-turn references — <em>"add a comment to that bug"</em> — work without any extra machinery.
+                </p>
+            </div>
+            <div class="split-right reveal" data-delay="3">
+<pre class="code"><span class="c-cm"># agent.py — the loop, slightly simplified</span>
+<span class="c-kw">def</span> <span class="c-fn">chat</span><span class="c-pun">(</span><span class="c-ty">self</span><span class="c-pun">,</span> <span class="c-ty">user_message</span><span class="c-pun">):</span>
+    <span class="c-ty">self</span><span class="c-pun">.</span><span class="c-ty">_messages</span><span class="c-pun">.</span><span class="c-fn">append</span><span class="c-pun">(</span>
+        <span class="c-pun">{</span><span class="c-str">"role"</span><span class="c-pun">:</span> <span class="c-str">"user"</span><span class="c-pun">,</span> <span class="c-str">"content"</span><span class="c-pun">:</span> <span class="c-ty">user_message</span><span class="c-pun">}</span>
+    <span class="c-pun">)</span>
+    <span class="c-kw">for</span> <span class="c-ty">_</span> <span class="c-kw">in</span> <span class="c-fn">range</span><span class="c-pun">(</span><span class="c-num">6</span><span class="c-pun">):</span>   <span class="c-cm"># MAX_ITERATIONS</span>
+        <span class="c-ty">resp</span> <span class="c-pun">=</span> <span class="c-ty">self</span><span class="c-pun">.</span><span class="c-ty">_llm</span><span class="c-pun">.</span><span class="c-fn">chat</span><span class="c-pun">(</span>
+            <span class="c-ty">self</span><span class="c-pun">.</span><span class="c-ty">_messages</span><span class="c-pun">,</span> <span class="c-ty">tools</span><span class="c-pun">=</span><span class="c-ty">TOOL_SCHEMAS</span>
+        <span class="c-pun">)</span>
+        <span class="c-ty">self</span><span class="c-pun">.</span><span class="c-ty">_messages</span><span class="c-pun">.</span><span class="c-fn">append</span><span class="c-pun">(</span><span class="c-fn">_to_dict</span><span class="c-pun">(</span><span class="c-ty">resp</span><span class="c-pun">))</span>
+
+        <span class="c-kw">if not</span> <span class="c-ty">resp</span><span class="c-pun">.</span><span class="c-ty">tool_calls</span><span class="c-pun">:</span>
+            <span class="c-kw">return</span> <span class="c-ty">resp</span><span class="c-pun">.</span><span class="c-ty">content</span>     <span class="c-cm"># done</span>
+
+        <span class="c-kw">for</span> <span class="c-ty">tc</span> <span class="c-kw">in</span> <span class="c-ty">resp</span><span class="c-pun">.</span><span class="c-ty">tool_calls</span><span class="c-pun">:</span>
+            <span class="c-ty">result</span> <span class="c-pun">=</span> <span class="c-fn">dispatch</span><span class="c-pun">(</span><span class="c-ty">tc</span><span class="c-pun">.</span><span class="c-ty">name</span><span class="c-pun">,</span> <span class="c-ty">tc</span><span class="c-pun">.</span><span class="c-ty">args</span><span class="c-pun">,</span> <span class="c-ty">self</span><span class="c-pun">.</span><span class="c-ty">_jira</span><span class="c-pun">)</span>
+            <span class="c-ty">self</span><span class="c-pun">.</span><span class="c-ty">_messages</span><span class="c-pun">.</span><span class="c-fn">append</span><span class="c-pun">(</span>
+                <span class="c-pun">{</span><span class="c-str">"role"</span><span class="c-pun">:</span> <span class="c-str">"tool"</span><span class="c-pun">,</span> <span class="c-str">"content"</span><span class="c-pun">:</span> <span class="c-fn">json</span><span class="c-pun">.</span><span class="c-fn">dumps</span><span class="c-pun">(</span><span class="c-ty">result</span><span class="c-pun">)}</span>
+            <span class="c-pun">)</span></pre>
+                <div class="code-caption">// every loop iteration: ask, branch, dispatch, append</div>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">08 / 17</div>
+</section>
+
+<!-- ===========================================
+     SLIDE 9 — Step 3: LLMClient
+     Thin OpenAI-SDK wrapper. Provider-neutral.
+     =========================================== -->
+<section class="slide" data-bg="light">
+    <div class="accent-stripe top"></div>
+    <div class="chrome-top">
+        <div class="brand-mark"><span class="brand-dot"></span> JIRA-AGENT // FIELD GUIDE</div>
+        <div class="chrome-track">
+            <span>01 CAST</span>
+            <span class="active">02 FLOW</span>
+            <span>03 TOOLS</span>
+            <span>04 SAFETY</span>
+        </div>
+    </div>
+    <div class="section-num">§ 02 / FLOW · STEP 03</div>
+    <div class="slide-content">
+        <div class="split-content">
+            <div class="split-left">
+                <div class="step-id reveal" data-delay="1">STEP 03 — ASK</div>
+                <h2 class="reveal" data-delay="2">The <span class="accent">LLMClient</span>.<br>One wrapper, any provider.</h2>
+                <p class="body reveal" data-delay="3">
+                    The official OpenAI Python SDK, pointed at <em>whatever</em> endpoint speaks the OpenAI tool-call wire format. By default: OpenRouter routing to Gemma 4 31B running in Google AI Studio.
+                </p>
+                <p class="body reveal" data-delay="4">
+                    Want vLLM, Ollama, Together, Groq, or a Llama instead? Edit two lines of <code style="font-family: 'JetBrains Mono', monospace;">.env</code>. No code changes.
+                </p>
+                <div class="callout reveal" data-delay="5">
+                    <strong style="color: var(--accent-blue);">// .env</strong><br>
+                    LLM_BASE_URL=https://openrouter.ai/api/v1<br>
+                    LLM_MODEL=google/gemma-4-31b-it:free
+                </div>
+            </div>
+            <div class="split-right reveal" data-delay="3">
+<pre class="code"><span class="c-cm"># llm.py — the entire client</span>
+<span class="c-kw">from</span> <span class="c-ty">openai</span> <span class="c-kw">import</span> <span class="c-ty">OpenAI</span>
+
+<span class="c-kw">class</span> <span class="c-ty">LLMClient</span><span class="c-pun">:</span>
+    <span class="c-kw">def</span> <span class="c-fn">__init__</span><span class="c-pun">(</span><span class="c-ty">self</span><span class="c-pun">,</span> <span class="c-ty">config</span><span class="c-pun">):</span>
+        <span class="c-ty">self</span><span class="c-pun">.</span><span class="c-ty">_client</span> <span class="c-pun">=</span> <span class="c-fn">OpenAI</span><span class="c-pun">(</span>
+            <span class="c-ty">api_key</span><span class="c-pun">=</span><span class="c-ty">config</span><span class="c-pun">.</span><span class="c-ty">llm_api_key</span><span class="c-pun">,</span>
+            <span class="c-ty">base_url</span><span class="c-pun">=</span><span class="c-ty">config</span><span class="c-pun">.</span><span class="c-ty">llm_base_url</span><span class="c-pun">,</span>
+        <span class="c-pun">)</span>
+        <span class="c-ty">self</span><span class="c-pun">.</span><span class="c-ty">_model</span> <span class="c-pun">=</span> <span class="c-ty">config</span><span class="c-pun">.</span><span class="c-ty">llm_model</span>
+
+    <span class="c-kw">def</span> <span class="c-fn">chat</span><span class="c-pun">(</span><span class="c-ty">self</span><span class="c-pun">,</span> <span class="c-ty">messages</span><span class="c-pun">,</span> <span class="c-ty">tools</span><span class="c-pun">=</span><span class="c-kw">None</span><span class="c-pun">):</span>
+        <span class="c-ty">resp</span> <span class="c-pun">=</span> <span class="c-ty">self</span><span class="c-pun">.</span><span class="c-ty">_client</span><span class="c-pun">.</span><span class="c-ty">chat</span><span class="c-pun">.</span><span class="c-ty">completions</span><span class="c-pun">.</span><span class="c-fn">create</span><span class="c-pun">(</span>
+            <span class="c-ty">model</span><span class="c-pun">=</span><span class="c-ty">self</span><span class="c-pun">.</span><span class="c-ty">_model</span><span class="c-pun">,</span>
+            <span class="c-ty">messages</span><span class="c-pun">=</span><span class="c-ty">messages</span><span class="c-pun">,</span>
+            <span class="c-ty">tools</span><span class="c-pun">=</span><span class="c-ty">tools</span><span class="c-pun">,</span>
+            <span class="c-ty">tool_choice</span><span class="c-pun">=</span><span class="c-str">"auto"</span><span class="c-pun">,</span>
+        <span class="c-pun">)</span>
+        <span class="c-kw">return</span> <span class="c-ty">resp</span><span class="c-pun">.</span><span class="c-ty">choices</span><span class="c-pun">[</span><span class="c-num">0</span><span class="c-pun">].</span><span class="c-ty">message</span></pre>
+                <div class="code-caption">// "openai-compatible" is the lingua franca of tool-calling</div>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">09 / 17</div>
+</section>
+
+<!-- ===========================================
+     SLIDE 10 — Step 4: The LLM responds (two outcomes)
+     Branch in the loop: text vs tool_call.
+     =========================================== -->
+<section class="slide is-dark" data-bg="dark">
+    <div class="accent-stripe top"></div>
+    <div class="chrome-top">
+        <div class="brand-mark"><span class="brand-dot"></span> JIRA-AGENT // FIELD GUIDE</div>
+        <div class="chrome-track">
+            <span>01 CAST</span>
+            <span class="active">02 FLOW</span>
+            <span>03 TOOLS</span>
+            <span>04 SAFETY</span>
+        </div>
+    </div>
+    <div class="section-num">§ 02 / FLOW · STEP 04</div>
+    <div class="slide-content">
+        <div style="display: flex; flex-direction: column; gap: clamp(0.8rem, 2vw, 1.5rem); flex: 1;">
+            <div>
+                <div class="step-id reveal" data-delay="1" style="color: var(--accent-blue);">STEP 04 — BRANCH</div>
+                <h2 class="reveal" data-delay="2" style="font-family: 'Manrope'; font-weight: 800; font-size: clamp(1.5rem, 4vw, 3rem); line-height: 0.95; color: var(--text-light);">
+                    The model's reply comes back<br>shaped one of two ways.
+                </h2>
+            </div>
+            <div class="outcomes">
+                <div class="outcome-card reveal" data-delay="3" style="background: var(--bg-dark-soft);">
+                    <div class="outcome-tag">// outcome a</div>
+                    <div class="outcome-title" style="color: var(--text-light);">Plain text.</div>
+                    <div class="outcome-body" style="color: var(--text-light-soft);">
+                        The model is satisfied: it has all the information it needs to answer. The Agent prints the text and returns. The turn is over.
+                    </div>
+<pre class="code" style="margin-top: clamp(0.4rem, 1vw, 0.8rem); background: var(--bg-dark);">{
+  <span class="c-str">"role"</span>: <span class="c-str">"assistant"</span>,
+  <span class="c-str">"content"</span>: <span class="c-str">"Created SCRUM-6."</span>,
+  <span class="c-str">"tool_calls"</span>: <span class="c-kw">None</span>
+}</pre>
+                </div>
+                <div class="outcome-card reveal" data-delay="4" style="background: var(--bg-dark-soft);">
+                    <div class="outcome-tag">// outcome b</div>
+                    <div class="outcome-title" style="color: var(--text-light);">Tool call(s).</div>
+                    <div class="outcome-body" style="color: var(--text-light-soft);">
+                        The model needs to act before it can answer. <code style="color: var(--accent-soft);">tool_calls</code> arrives as a list — the Agent runs each one and feeds the results back.
+                    </div>
+<pre class="code" style="margin-top: clamp(0.4rem, 1vw, 0.8rem); background: var(--bg-dark);">{
+  <span class="c-str">"tool_calls"</span>: [{
+    <span class="c-str">"name"</span>: <span class="c-str">"assign_issue"</span>,
+    <span class="c-str">"arguments"</span>: <span class="c-str">'{"issue_key":</span>
+<span class="c-str">       "SCRUM-6", "assignee":"me"}'</span>
+  }]
+}</pre>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">10 / 17</div>
+</section>
+
+<!-- ===========================================
+     SLIDE 11 — Step 5: tools.py — dispatch
+     Schemas + handlers + {ok, ...} envelope.
+     =========================================== -->
+<section class="slide" data-bg="light">
+    <div class="accent-stripe top"></div>
+    <div class="chrome-top">
+        <div class="brand-mark"><span class="brand-dot"></span> JIRA-AGENT // FIELD GUIDE</div>
+        <div class="chrome-track">
+            <span>01 CAST</span>
+            <span>02 FLOW</span>
+            <span class="active">03 TOOLS</span>
+            <span>04 SAFETY</span>
+        </div>
+    </div>
+    <div class="section-num">§ 03 / TOOLS · STEP 05</div>
+    <div class="slide-content">
+        <div class="split-content">
+            <div class="split-left">
+                <div class="step-id reveal" data-delay="1">STEP 05 — DISPATCH</div>
+                <h2 class="reveal" data-delay="2"><span class="accent">tools.py</span>.<br>Two halves, one purpose.</h2>
+                <p class="body reveal" data-delay="3">
+                    <strong style="color: var(--text-dark);">TOOL_SCHEMAS</strong> — JSON Schema for each tool. Sent to the LLM every turn so it knows what's callable.
+                </p>
+                <p class="body reveal" data-delay="4">
+                    <strong style="color: var(--text-dark);">dispatch()</strong> — runs the tool. Catches <em>every</em> exception so the chat history never ends up with an orphan tool call.
+                </p>
+                <div class="callout reveal" data-delay="5">
+                    <strong style="color: var(--accent-blue);">// the envelope</strong><br>
+                    Every tool returns <code>{"ok": true, "result": ...}</code> or <code>{"ok": false, "error": "..."}</code>. A consistent shape lets the model decide: <em>retry, recover, or give up</em>.
+                </div>
+            </div>
+            <div class="split-right reveal" data-delay="3">
+<pre class="code"><span class="c-cm"># tools.py — the dispatch function</span>
+<span class="c-kw">def</span> <span class="c-fn">dispatch</span><span class="c-pun">(</span><span class="c-ty">name</span><span class="c-pun">,</span> <span class="c-ty">arguments</span><span class="c-pun">,</span> <span class="c-ty">jira</span><span class="c-pun">):</span>
+    <span class="c-ty">handler</span> <span class="c-pun">=</span> <span class="c-ty">HANDLERS</span><span class="c-pun">.</span><span class="c-fn">get</span><span class="c-pun">(</span><span class="c-ty">name</span><span class="c-pun">)</span>
+    <span class="c-kw">if</span> <span class="c-ty">handler</span> <span class="c-kw">is</span> <span class="c-kw">None</span><span class="c-pun">:</span>
+        <span class="c-kw">return</span> <span class="c-pun">{</span><span class="c-str">"ok"</span><span class="c-pun">:</span> <span class="c-kw">False</span><span class="c-pun">,</span>
+                <span class="c-str">"error"</span><span class="c-pun">:</span> <span class="c-fn">f</span><span class="c-str">"Unknown tool: {name}"</span><span class="c-pun">}</span>
+    <span class="c-kw">try</span><span class="c-pun">:</span>
+        <span class="c-ty">result</span> <span class="c-pun">=</span> <span class="c-fn">handler</span><span class="c-pun">(</span><span class="c-ty">jira</span><span class="c-pun">,</span> <span class="c-pun">**</span><span class="c-ty">arguments</span><span class="c-pun">)</span>
+        <span class="c-kw">return</span> <span class="c-pun">{</span><span class="c-str">"ok"</span><span class="c-pun">:</span> <span class="c-kw">True</span><span class="c-pun">,</span> <span class="c-str">"result"</span><span class="c-pun">:</span> <span class="c-ty">result</span><span class="c-pun">}</span>
+    <span class="c-kw">except</span> <span class="c-ty">JiraError</span> <span class="c-kw">as</span> <span class="c-ty">e</span><span class="c-pun">:</span>
+        <span class="c-kw">return</span> <span class="c-pun">{</span><span class="c-str">"ok"</span><span class="c-pun">:</span> <span class="c-kw">False</span><span class="c-pun">,</span> <span class="c-str">"error"</span><span class="c-pun">:</span> <span class="c-fn">str</span><span class="c-pun">(</span><span class="c-ty">e</span><span class="c-pun">)}</span>
+    <span class="c-kw">except</span> <span class="c-ty">Exception</span> <span class="c-kw">as</span> <span class="c-ty">e</span><span class="c-pun">:</span>
+        <span class="c-cm"># total: never leave an orphan tool_call</span>
+        <span class="c-kw">return</span> <span class="c-pun">{</span><span class="c-str">"ok"</span><span class="c-pun">:</span> <span class="c-kw">False</span><span class="c-pun">,</span>
+                <span class="c-str">"error"</span><span class="c-pun">:</span> <span class="c-fn">f</span><span class="c-str">"{type(e).__name__}: {e}"</span><span class="c-pun">}</span></pre>
+                <div class="code-caption">// 5 handlers: create · search · transition · comment · assign</div>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">11 / 17</div>
+</section>
+
+<!-- ===========================================
+     SLIDE 12 — Step 6: JiraClient
+     The only piece that speaks HTTP.
+     =========================================== -->
+<section class="slide is-dark" data-bg="dark">
+    <div class="accent-stripe top"></div>
+    <div class="chrome-top">
+        <div class="brand-mark"><span class="brand-dot"></span> JIRA-AGENT // FIELD GUIDE</div>
+        <div class="chrome-track">
+            <span>01 CAST</span>
+            <span>02 FLOW</span>
+            <span class="active">03 TOOLS</span>
+            <span>04 SAFETY</span>
+        </div>
+    </div>
+    <div class="section-num">§ 03 / TOOLS · STEP 06</div>
+    <div class="slide-content">
+        <div class="split-content">
+            <div class="split-left">
+                <div class="step-id reveal" data-delay="1">STEP 06 — EXECUTE</div>
+                <h2 class="reveal" data-delay="2">The <span class="accent">JiraClient</span>.<br>One wire out, one wire in.</h2>
+                <p class="body reveal" data-delay="3" style="color: var(--text-light-soft);">
+                    A thin <code style="font-family: 'JetBrains Mono', monospace; color: var(--accent-soft);">httpx</code> wrapper. One method per REST endpoint we care about. Sync, not async — for a single-user CLI it's easier to read and step through.
+                </p>
+                <p class="body reveal" data-delay="4" style="color: var(--text-light-soft);">
+                    Plain Python strings in; structured Jira-shaped JSON out. The Atlassian Document Format (ADF) wrapping for descriptions and comments lives here so the LLM can keep using plain text.
+                </p>
+                <div class="callout reveal" data-delay="5" style="background: rgba(182, 192, 255, 0.08);">
+                    <strong style="color: var(--accent-soft);">// no MCP</strong><br>
+                    Direct REST, deliberately. MCP adds a second process and another protocol — fine in production, noise in a learning project.
+                </div>
+            </div>
+            <div class="split-right reveal" data-delay="3">
+<pre class="code" style="background: var(--bg-dark-soft);"><span class="c-cm"># jira_client.py — assign an issue</span>
+<span class="c-kw">def</span> <span class="c-fn">assign_issue</span><span class="c-pun">(</span><span class="c-ty">self</span><span class="c-pun">,</span> <span class="c-ty">key</span><span class="c-pun">,</span> <span class="c-ty">assignee</span><span class="c-pun">):</span>
+    <span class="c-cm"># resolve "me" / "unassigned" / search</span>
+    <span class="c-ty">account_id</span> <span class="c-pun">=</span> <span class="c-ty">self</span><span class="c-pun">.</span><span class="c-fn">_resolve_user</span><span class="c-pun">(</span><span class="c-ty">assignee</span><span class="c-pun">)</span>
+
+    <span class="c-ty">self</span><span class="c-pun">.</span><span class="c-ty">_http</span><span class="c-pun">.</span><span class="c-fn">put</span><span class="c-pun">(</span>
+        <span class="c-fn">f</span><span class="c-str">"/rest/api/3/issue/{key}/assignee"</span><span class="c-pun">,</span>
+        <span class="c-ty">json</span><span class="c-pun">=</span><span class="c-pun">{</span><span class="c-str">"accountId"</span><span class="c-pun">:</span> <span class="c-ty">account_id</span><span class="c-pun">},</span>
+    <span class="c-pun">)</span>
+    <span class="c-kw">return</span> <span class="c-pun">{</span><span class="c-str">"assigned"</span><span class="c-pun">:</span> <span class="c-ty">key</span><span class="c-pun">}</span>
+
+
+<span class="c-cm"># …and friendly errors aid LLM self-correction:</span>
+<span class="c-kw">raise</span> <span class="c-ty">JiraError</span><span class="c-pun">(</span>
+    <span class="c-fn">f</span><span class="c-str">"No transition named '{name}' on {key}. "</span>
+    <span class="c-fn">f</span><span class="c-str">"Available: {', '.join(available)}"</span>
+<span class="c-pun">)</span></pre>
+                <div class="code-caption">// errors that list alternatives → models can recover</div>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">12 / 17</div>
+</section>
+
+<!-- ===========================================
+     SLIDE 13 — Step 7: loop closes
+     Tool result fed back, second LLM call, text reply.
+     =========================================== -->
+<section class="slide" data-bg="light">
+    <div class="accent-stripe top"></div>
+    <div class="chrome-top">
+        <div class="brand-mark"><span class="brand-dot"></span> JIRA-AGENT // FIELD GUIDE</div>
+        <div class="chrome-track">
+            <span>01 CAST</span>
+            <span class="active">02 FLOW</span>
+            <span>03 TOOLS</span>
+            <span>04 SAFETY</span>
+        </div>
+    </div>
+    <div class="section-num">§ 02 / FLOW · STEP 07</div>
+    <div class="slide-content">
+        <div class="split-content">
+            <div class="split-left">
+                <div class="step-id reveal" data-delay="1">STEP 07 — CLOSE</div>
+                <h2 class="reveal" data-delay="2">The loop<br><span class="accent">closes.</span></h2>
+                <p class="body reveal" data-delay="3">
+                    The tool result is appended to history as a <code style="font-family: 'JetBrains Mono', monospace;">"role": "tool"</code> message. The loop goes back to step 1 — another call to the LLM.
+                </p>
+                <p class="body reveal" data-delay="4">
+                    This time, with the tool result in context, the model almost always produces a plain text reply summarising what happened. The Agent returns it. The CLI prints it. Done.
+                </p>
+                <div class="callout reveal" data-delay="5">
+                    <strong style="color: var(--accent-blue);">// the guardrail</strong><br>
+                    <code>MAX_ITERATIONS = 6</code>. Most turns finish in 1–2. Six is generous — and an absolute stop on a model self-correcting forever.
+                </div>
+            </div>
+            <div class="split-right reveal" data-delay="3">
+<pre class="code"><span class="c-cm"># conversation history after one turn:</span>
+[
+  <span class="c-pun">{</span><span class="c-str">"role"</span>: <span class="c-str">"system"</span><span class="c-pun">,</span> <span class="c-str">"content"</span>: <span class="c-str">"..."</span><span class="c-pun">},</span>
+  <span class="c-pun">{</span><span class="c-str">"role"</span>: <span class="c-str">"user"</span><span class="c-pun">,</span>
+   <span class="c-str">"content"</span>: <span class="c-str">"Assign SCRUM-6 to me"</span><span class="c-pun">},</span>
+
+  <span class="c-cm"># 1st LLM call → tool_call</span>
+  <span class="c-pun">{</span><span class="c-str">"role"</span>: <span class="c-str">"assistant"</span><span class="c-pun">,</span>
+   <span class="c-str">"tool_calls"</span>: [<span class="c-pun">{</span><span class="c-str">"name"</span>: <span class="c-str">"assign_issue"</span><span class="c-pun">,</span> ...<span class="c-pun">}]},</span>
+
+  <span class="c-cm"># dispatch() ran it</span>
+  <span class="c-pun">{</span><span class="c-str">"role"</span>: <span class="c-str">"tool"</span><span class="c-pun">,</span>
+   <span class="c-str">"content"</span>: <span class="c-str">'{"ok": true, "result":</span>
+<span class="c-str">              {"assigned": "SCRUM-6"}}'</span><span class="c-pun">},</span>
+
+  <span class="c-cm"># 2nd LLM call → plain text → done</span>
+  <span class="c-pun">{</span><span class="c-str">"role"</span>: <span class="c-str">"assistant"</span><span class="c-pun">,</span>
+   <span class="c-str">"content"</span>: <span class="c-str">"Assigned SCRUM-6 to you."</span><span class="c-pun">}</span>
+]</pre>
+                <div class="code-caption">// history grows on the Agent instance, one turn at a time</div>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">13 / 17</div>
+</section>
+
+<!-- ===========================================
+     SLIDE 14 — End-to-end trace
+     Vertical timeline through one turn.
+     =========================================== -->
+<section class="slide is-dark" data-bg="dark">
+    <div class="accent-stripe top"></div>
+    <div class="chrome-top">
+        <div class="brand-mark"><span class="brand-dot"></span> JIRA-AGENT // FIELD GUIDE</div>
+        <div class="chrome-track">
+            <span>01 CAST</span>
+            <span class="active">02 FLOW</span>
+            <span>03 TOOLS</span>
+            <span>04 SAFETY</span>
+        </div>
+    </div>
+    <div class="section-num">§ 02 / FLOW · TRACE</div>
+    <div class="slide-content">
+        <div style="display: flex; flex-direction: column; gap: clamp(0.6rem, 1.5vw, 1.2rem); flex: 1; justify-content: center;">
+            <div>
+                <div class="eyebrow reveal" data-delay="1">All Together Now</div>
+                <h2 class="reveal" data-delay="2" style="font-family: 'Manrope'; font-weight: 800; font-size: clamp(1.3rem, 3.5vw, 2.5rem); line-height: 0.95; color: var(--text-light); margin-top: clamp(0.3rem, 0.8vw, 0.5rem);">
+                    "<span class="accent">Assign SCRUM-6 to me</span>" — end to end.
+                </h2>
+            </div>
+            <div class="trace reveal" data-delay="3">
+                <div class="trace-actor">CLI</div>
+                <div class="trace-event">Reads <code>"Assign SCRUM-6 to me"</code> from <code>input()</code>, hands it to <strong>Agent.chat()</strong>.</div>
+                <div class="trace-arrow">↓ python call</div>
+
+                <div class="trace-actor">Agent</div>
+                <div class="trace-event">Appends user message to history. Calls <strong>LLMClient.chat(messages, tools=TOOL_SCHEMAS)</strong>.</div>
+                <div class="trace-arrow">↓ https POST</div>
+
+                <div class="trace-actor">LLM</div>
+                <div class="trace-event">Returns a tool call: <code>assign_issue(issue_key="SCRUM-6", assignee="me")</code>.</div>
+                <div class="trace-arrow">↓ dispatch</div>
+
+                <div class="trace-actor">tools.py</div>
+                <div class="trace-event">Looks up handler in <strong>HANDLERS</strong>. Calls <code>jira.assign_issue("SCRUM-6", "me")</code>.</div>
+                <div class="trace-arrow">↓ https x2</div>
+
+                <div class="trace-actor">JiraClient</div>
+                <div class="trace-event"><code>GET /rest/api/3/myself</code> → accountId. Then <code>PUT /rest/api/3/issue/SCRUM-6/assignee</code>.</div>
+                <div class="trace-arrow">↑ envelope</div>
+
+                <div class="trace-actor">Agent</div>
+                <div class="trace-event">Wraps result in <code>{"ok": true, ...}</code>. Appends as <code>"role": "tool"</code>. Loops back to step 1.</div>
+                <div class="trace-arrow">↓ https POST</div>
+
+                <div class="trace-actor">LLM</div>
+                <div class="trace-event">Sees the success envelope in context. Returns plain text: <strong>"Assigned SCRUM-6 to you."</strong></div>
+                <div class="trace-arrow">↑ print</div>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">14 / 17</div>
+</section>
+
+<!-- ===========================================
+     SLIDE 15 — Two design ideas
+     The two ideas that make this whole thing work.
+     =========================================== -->
+<section class="slide" data-bg="light">
+    <div class="accent-stripe top"></div>
+    <div class="chrome-top">
+        <div class="brand-mark"><span class="brand-dot"></span> JIRA-AGENT // FIELD GUIDE</div>
+        <div class="chrome-track">
+            <span>01 CAST</span>
+            <span>02 FLOW</span>
+            <span class="active">03 TOOLS</span>
+            <span>04 SAFETY</span>
+        </div>
+    </div>
+    <div class="section-num">§ 03 / TOOLS · IDEAS</div>
+    <div class="slide-content">
+        <div style="display: flex; flex-direction: column; gap: clamp(0.8rem, 2vw, 1.5rem); flex: 1;">
+            <div>
+                <div class="eyebrow reveal" data-delay="1">Why It Works</div>
+                <h2 class="title-xl reveal" data-delay="2" style="font-size: clamp(1.5rem, 4vw, 3rem); margin-top: clamp(0.3rem, 0.8vw, 0.6rem);">
+                    Two design ideas<br>do all the heavy lifting.
+                </h2>
+            </div>
+            <div class="ideas">
+                <div class="idea reveal" data-delay="3">
+                    <div class="idea-num">01</div>
+                    <div class="idea-title">A standard wire format.</div>
+                    <div class="idea-body">
+                        Almost every modern LLM — OpenAI, Anthropic via aggregators, Llama, Qwen, Gemma, DeepSeek, Mistral, models hosted on vLLM or Ollama — speaks the OpenAI tool-call shape. <em>Tools in, tool_calls out.</em>
+                        <br><br>
+                        That makes the LLM a swappable part. Change two lines in <code style="font-family: 'JetBrains Mono', monospace; color: var(--accent-blue);">.env</code> and the agent talks to a different brain.
+                    </div>
+                </div>
+                <div class="idea reveal" data-delay="4">
+                    <div class="idea-num">02</div>
+                    <div class="idea-title">Tool calls are the world.</div>
+                    <div class="idea-body">
+                        The LLM only ever <em>describes</em> what it wants done — it never executes anything itself. The runtime executes. The LLM sees the result.
+                        <br><br>
+                        Everything an agent can do is what its tools allow. Want a new capability? Add a tool. Want a sharper safety boundary? Remove one. The blast radius lives in <code style="font-family: 'JetBrains Mono', monospace; color: var(--accent-blue);">tools.py</code>.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">15 / 17</div>
+</section>
+
+<!-- ===========================================
+     SLIDE 16 — Safety / sharp edges
+     What this v1 protects against, what it deliberately doesn't.
+     =========================================== -->
+<section class="slide is-dark" data-bg="dark">
+    <div class="accent-stripe top"></div>
+    <div class="chrome-top">
+        <div class="brand-mark"><span class="brand-dot"></span> JIRA-AGENT // FIELD GUIDE</div>
+        <div class="chrome-track">
+            <span>01 CAST</span>
+            <span>02 FLOW</span>
+            <span>03 TOOLS</span>
+            <span class="active">04 SAFETY</span>
+        </div>
+    </div>
+    <div class="section-num">§ 04 / SAFETY</div>
+    <div class="slide-content">
+        <div style="display: flex; flex-direction: column; gap: clamp(0.8rem, 2vw, 1.5rem); flex: 1; justify-content: center;">
+            <div>
+                <div class="eyebrow reveal" data-delay="1">Sharp Edges</div>
+                <h2 class="title-xl reveal" data-delay="2" style="font-size: clamp(1.5rem, 4vw, 3rem); margin-top: clamp(0.3rem, 0.8vw, 0.6rem); color: var(--text-light);">
+                    Real Jira. Real writes.<br>So a few <span class="accent">guardrails</span>.
+                </h2>
+            </div>
+            <div class="bullets">
+                <div class="bullet-item reveal" data-delay="3">
+                    <div class="bullet-num">01</div>
+                    <div class="bullet-body">
+                        <strong>dispatch() is total.</strong> Every exception is caught and wrapped in <code style="font-family: 'JetBrains Mono', monospace; color: var(--accent-soft);">{"ok": false, ...}</code>. An uncaught error would leave the chat history with an orphan tool call and break the next turn.
+                    </div>
+                </div>
+                <div class="bullet-item reveal" data-delay="4">
+                    <div class="bullet-num">02</div>
+                    <div class="bullet-body">
+                        <strong>Untrusted Jira data is delimited.</strong> Free-text fields (summaries, comments, display names) are wrapped in <code style="font-family: 'JetBrains Mono', monospace; color: var(--accent-soft);">&lt;untrusted&gt;...&lt;/untrusted&gt;</code> before the model sees them. The system prompt tells the model: <em>data only — never instructions.</em>
+                    </div>
+                </div>
+                <div class="bullet-item reveal" data-delay="5">
+                    <div class="bullet-num">03</div>
+                    <div class="bullet-body">
+                        <strong>Friendly errors enable self-correction.</strong> A wrong transition name produces an error that lists the valid options. A strong model reads it and retries with the right one — turning a 400 into a recovery opportunity.
+                    </div>
+                </div>
+                <div class="bullet-item reveal" data-delay="6">
+                    <div class="bullet-num">04</div>
+                    <div class="bullet-body" style="color: var(--text-light-soft);">
+                        <strong style="color: #f4b8c5;">Out of scope for v1: write confirmation.</strong> Writes fire immediately. Defensible for a single-user sandbox where every tool call is visible in the trace; the first thing to add before this ever runs unattended or on a shared instance.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">16 / 17</div>
+</section>
+
+<!-- ===========================================
+     SLIDE 17 — Read the code
+     File pointers + closing invitation.
+     =========================================== -->
+<section class="slide" data-bg="light">
+    <div class="accent-stripe top"></div>
+    <div class="chrome-top">
+        <div class="brand-mark"><span class="brand-dot"></span> JIRA-AGENT // FIELD GUIDE</div>
+        <div class="chrome-track">
+            <span>01 CAST</span>
+            <span>02 FLOW</span>
+            <span>03 TOOLS</span>
+            <span>04 SAFETY</span>
+        </div>
+    </div>
+    <div class="section-num">§ END / READ THE CODE</div>
+    <div class="slide-content">
+        <div style="display: flex; flex-direction: column; gap: clamp(0.8rem, 2vw, 1.5rem); flex: 1; justify-content: center;">
+            <div>
+                <div class="eyebrow reveal" data-delay="1">Your Turn</div>
+                <h2 class="title-xl reveal" data-delay="2" style="font-size: clamp(1.5rem, 4vw, 3rem); margin-top: clamp(0.3rem, 0.8vw, 0.6rem);">
+                    Step through it.<br>It's <span class="accent">smaller than you think.</span>
+                </h2>
+            </div>
+            <div class="files reveal" data-delay="3">
+                <div class="file-row featured">
+                    <div class="fp">agent.py</div>
+                    <div class="fd">Start here. The whole loop is ~40 lines and is the centre of everything.</div>
+                </div>
+                <div class="file-row">
+                    <div class="fp">tools.py</div>
+                    <div class="fd">Schemas the LLM sees + the dispatch function that runs them.</div>
+                </div>
+                <div class="file-row">
+                    <div class="fp">llm.py</div>
+                    <div class="fd">The wrapper. Swap your model in two lines of <code>.env</code>.</div>
+                </div>
+                <div class="file-row">
+                    <div class="fp">jira_client.py</div>
+                    <div class="fd">Direct REST. The only thing that makes HTTP calls to Jira.</div>
+                </div>
+                <div class="file-row">
+                    <div class="fp">cli.py</div>
+                    <div class="fd">The REPL. Where the trace lines are printed.</div>
+                </div>
+            </div>
+            <div class="cta-line reveal" data-delay="6">
+                $ uv run jira-agent  &nbsp;·&nbsp;  read alongside the code
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">17 / 17</div>
+</section>
+
+<script>
+/* ===========================================
+   PRESENTATION CONTROLLER
+   - Arrow keys / Space / PageUp / PageDown navigation
+   - Click nav dots
+   - Touch/swipe for mobile
+   - Progress bar updates on scroll
+   - .visible class added via IntersectionObserver
+     so CSS reveal animations fire when slides enter view
+   =========================================== */
+class SlidePresentation {
+    constructor() {
+        this.slides = Array.from(document.querySelectorAll('.slide'));
+        this.currentSlide = 0;
+        this.navDotsContainer = document.getElementById('navDots');
+        this.progressBar = document.getElementById('progressBar');
+        this.keyboardHint = document.getElementById('keyboardHint');
+
+        this.setupNavDots();
+        this.setupIntersectionObserver();
+        this.setupKeyboardNav();
+        this.setupTouchNav();
+        this.setupScrollProgress();
+        this.scheduleHintFade();
+    }
+
+    /* Build navigation dots (one per slide). Clear first to avoid
+       duplicates if outerHTML is re-rendered. */
+    setupNavDots() {
+        this.navDotsContainer.innerHTML = '';
+        this.slides.forEach((_, i) => {
+            const dot = document.createElement('button');
+            dot.className = 'nav-dot' + (i === 0 ? ' active' : '');
+            dot.setAttribute('aria-label', `Slide ${i + 1}`);
+            dot.addEventListener('click', () => this.goTo(i));
+            this.navDotsContainer.appendChild(dot);
+        });
+    }
+
+    /* IntersectionObserver — adds .visible when a slide is at least
+       50% in viewport, triggering CSS reveal animations.
+       Also updates the active nav dot and the dot color (dark/light). */
+    setupIntersectionObserver() {
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach((entry) => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('visible');
+                    const idx = this.slides.indexOf(entry.target);
+                    if (idx !== -1) {
+                        this.currentSlide = idx;
+                        this.updateActiveDot(idx);
+                        this.updateChromeForBg(entry.target.dataset.bg);
+                    }
+                }
+            });
+        }, { threshold: 0.5 });
+        this.slides.forEach((slide) => observer.observe(slide));
+    }
+
+    updateActiveDot(idx) {
+        const dots = this.navDotsContainer.querySelectorAll('.nav-dot');
+        dots.forEach((dot, i) => dot.classList.toggle('active', i === idx));
+    }
+
+    /* Swap nav-dot + keyboard-hint colors when the slide is dark. */
+    updateChromeForBg(bg) {
+        const isDark = bg === 'dark' || bg === 'split';
+        this.navDotsContainer.classList.toggle('on-dark', isDark);
+        this.keyboardHint.classList.toggle('on-dark', isDark);
+    }
+
+    setupKeyboardNav() {
+        document.addEventListener('keydown', (e) => {
+            switch (e.key) {
+                case 'ArrowDown':
+                case 'ArrowRight':
+                case 'PageDown':
+                case ' ':
+                    e.preventDefault();
+                    this.goTo(this.currentSlide + 1);
+                    break;
+                case 'ArrowUp':
+                case 'ArrowLeft':
+                case 'PageUp':
+                    e.preventDefault();
+                    this.goTo(this.currentSlide - 1);
+                    break;
+                case 'Home':
+                    e.preventDefault();
+                    this.goTo(0);
+                    break;
+                case 'End':
+                    e.preventDefault();
+                    this.goTo(this.slides.length - 1);
+                    break;
+            }
+        });
+    }
+
+    /* Touch swipe — vertical only. Threshold tuned to avoid
+       false positives from small movement. */
+    setupTouchNav() {
+        let startY = 0;
+        document.addEventListener('touchstart', (e) => {
+            startY = e.touches[0].clientY;
+        }, { passive: true });
+        document.addEventListener('touchend', (e) => {
+            const diff = startY - e.changedTouches[0].clientY;
+            if (Math.abs(diff) < 50) return;
+            this.goTo(this.currentSlide + (diff > 0 ? 1 : -1));
+        }, { passive: true });
+    }
+
+    setupScrollProgress() {
+        window.addEventListener('scroll', () => {
+            const max = document.documentElement.scrollHeight - window.innerHeight;
+            const pct = max > 0 ? (window.scrollY / max) * 100 : 0;
+            this.progressBar.style.width = pct + '%';
+        }, { passive: true });
+    }
+
+    goTo(idx) {
+        idx = Math.max(0, Math.min(this.slides.length - 1, idx));
+        this.slides[idx].scrollIntoView({ behavior: 'smooth', block: 'start' });
+        this.fadeHint();
+    }
+
+    /* Keyboard hint fades out after first navigation or after 6s. */
+    scheduleHintFade() {
+        setTimeout(() => this.fadeHint(), 6000);
+    }
+    fadeHint() {
+        this.keyboardHint.classList.add('hidden');
+    }
+}
+
+new SlidePresentation();
+
+/* Mark first slide visible on initial load (intersection observer
+   sometimes lags on the slide already in view at page load). */
+window.addEventListener('load', () => {
+    document.querySelector('.slide')?.classList.add('visible');
+});
+
+/* ===========================================
+   ARCHITECTURE TRACE — manual stepper (slide 5)
+   Each button click advances one step. The current step pulses
+   the relevant components and the caption narrates the hop.
+   After the final step, the next click restarts at step 0.
+   =========================================== */
+(function setupArchTrace() {
+    const diagram = document.getElementById('archDiagram');
+    const caption = document.getElementById('flowCaption');
+    const playBtn = document.getElementById('flowPlayBtn');
+    if (!diagram || !caption || !playBtn) return;
+
+    /* Each step: ids = nodes/arrows to highlight; dir = direction glyph;
+       text = caption shown. */
+    const trace = [
+        { ids: ['cli'],                       dir: '▶', text: 'CLI reads <em>"Assign SCRUM-6 to me"</em> from input().' },
+        { ids: ['cli-agent', 'agent'],        dir: '→', text: 'Hands the line to <code>Agent.chat()</code>.' },
+        { ids: ['agent-llm', 'llm'],          dir: '→', text: '<code>Agent</code> calls <code>LLMClient.chat(messages, tools=TOOL_SCHEMAS)</code>.' },
+        { ids: ['llm-openrouter', 'openrouter'], dir: '→', text: 'OpenAI SDK sends an HTTPS POST to <strong>OpenRouter</strong>.' },
+        { ids: ['openrouter-upstream', 'upstream'], dir: '→', text: 'OpenRouter relays to the <strong>Upstream LLM</strong>. The model decides: emit a tool call.' },
+        { ids: ['upstream', 'openrouter-upstream'], dir: '◀', text: 'Model returns <code>assign_issue(issue_key="SCRUM-6", assignee="me")</code>.' },
+        { ids: ['openrouter', 'llm-openrouter'], dir: '◀', text: 'Response travels back through OpenRouter.' },
+        { ids: ['llm', 'agent-llm'],          dir: '◀', text: '<code>LLMClient</code> hands the parsed reply back to the Agent.' },
+        { ids: ['agent'],                     dir: '★', text: '<code>Agent</code> sees a tool_call. Time to dispatch.' },
+        { ids: ['agent-tools', 'tools'],      dir: '→', text: 'Dispatch via <code>tools.py</code> — looks up the handler in <code>HANDLERS</code>.' },
+        { ids: ['tools-jira', 'jira'],        dir: '→', text: 'Handler calls <code>jira.assign_issue("SCRUM-6", "me")</code>.' },
+        { ids: ['jira-atlassian', 'atlassian'], dir: '→', text: '<code>JiraClient</code> hits <strong>Atlassian Cloud</strong>: GET /myself → accountId, PUT /issue/SCRUM-6/assignee.' },
+        { ids: ['atlassian', 'jira-atlassian'], dir: '◀', text: 'Atlassian Cloud returns 204 No Content.' },
+        { ids: ['jira', 'tools-jira'],        dir: '◀', text: '<code>JiraClient</code> returns the result up to <code>tools.py</code>.' },
+        { ids: ['tools', 'agent-tools'],      dir: '◀', text: '<code>tools.py</code> wraps it in <code>{"ok": true, ...}</code>.' },
+        { ids: ['agent'],                     dir: '★', text: '<code>Agent</code> appends the tool result to history. Loops back to step 1.' },
+        { ids: ['agent-llm', 'llm'],          dir: '→', text: 'Second turn: <code>LLMClient.chat()</code> with the success envelope in context.' },
+        { ids: ['llm-openrouter', 'openrouter'], dir: '→', text: 'POST to OpenRouter again.' },
+        { ids: ['openrouter-upstream', 'upstream'], dir: '→', text: 'Upstream LLM sees the success and replies with plain text.' },
+        { ids: ['openrouter', 'llm-openrouter'], dir: '◀', text: 'Response returns through OpenRouter.' },
+        { ids: ['llm', 'agent-llm'],          dir: '◀', text: '<code>LLMClient</code> hands back: <em>"Assigned SCRUM-6 to you."</em>' },
+        { ids: ['agent'],                     dir: '★', text: 'No tool_calls in this reply — <code>Agent.chat()</code> returns the text.' },
+        { ids: ['cli-agent', 'cli'],          dir: '◀', text: '<code>CLI</code> prints the reply. The turn is complete.' },
+    ];
+
+    const LAST = trace.length - 1;
+    let idx = -1; // -1 = idle (nothing shown yet); 0..LAST = currently showing step idx
+
+    function clearAll() {
+        diagram.querySelectorAll('.flowing').forEach(el => el.classList.remove('flowing'));
+    }
+
+    function showIdle() {
+        clearAll();
+        caption.innerHTML = '<span class="flow-arrow">▶</span>Press <strong>Start</strong> to trace <em>"Assign SCRUM-6 to me"</em> through the system.';
+        playBtn.textContent = '▶ Start trace';
+        idx = -1;
+    }
+
+    function showStep(n) {
+        clearAll();
+        const step = trace[n];
+        step.ids.forEach(id => {
+            const el = diagram.querySelector(`[data-trace-id="${id}"]`);
+            if (el) el.classList.add('flowing');
+        });
+        caption.innerHTML = `<span class="flow-arrow">${step.dir || ''}</span>${step.text}`;
+        playBtn.textContent = (n === LAST) ? '↻ Restart trace' : `Next step ▶ (${n + 1}/${trace.length})`;
+        idx = n;
+    }
+
+    /* idle → step 0 → step 1 → ... → step LAST → step 0 (cycle) */
+    function advance() {
+        if (idx === -1 || idx === LAST) {
+            showStep(0);
+        } else {
+            showStep(idx + 1);
+        }
+    }
+
+    playBtn.addEventListener('click', advance);
+    showIdle();
+})();
+</script>
+</body>
+</html>
