@@ -4,6 +4,10 @@ version = "0.1.0"
 description = "LLM-driven Jira agent: drive Atlassian Cloud Jira through natural-language requests in a terminal REPL."
 readme = "README.md"
 requires-python = ">=3.12"
+license = {file = "LICENSE"}
+authors = [
+    {name = "AdvsInAI", email = "273494525+AdvsInAI@users.noreply.github.com"},
+]
 dependencies = [
     "httpx>=0.28.1",
     "openai>=2.36.0",
@@ -12,6 +16,10 @@ dependencies = [
 
 [project.scripts]
 jira-agent = "jira_agent.cli:main"
+
+[project.urls]
+Repository = "https://github.com/AdvsInAI/jira-agent"
+Issues = "https://github.com/AdvsInAI/jira-agent/issues"
 
 [build-system]
 requires = ["uv_build>=0.11.14,<0.12.0"]
