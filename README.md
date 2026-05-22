@@ -265,17 +265,9 @@ Things a contributor should know before extending the project.
 - **No tests.** The dispatch layer and agent loop are testable in principle (mock the LLM and Jira clients) but no tests exist yet.
 - **No streaming.** Replies arrive all at once after the model finishes generating. Switching to streaming is a ~30-line change in `llm.py` and `cli.py`.
 
-## Where to extend
+## What's next
 
-Roughly easiest to hardest:
-
-1. **Fix the orphan-user-message wart.** Small refactor in `Agent.chat()`.
-2. **Add more tools.** `get_issue` for full detail on one issue, `list_projects`, `list_transitions`, `add_attachment`. Each is ~15 lines following the `create_issue` template in `tools.py`.
-3. **Markdown rendering of replies.** Add `rich` as a dep, run the reply through `rich.markdown.Markdown` for nicer terminal output.
-4. **Streaming.** `openai.OpenAI(...).chat.completions.create(stream=True)` returns chunks; update `llm.py` to expose them and `cli.py` to print them as they arrive.
-5. **Tests.** Mock the LLM with canned `ChatCompletionMessage` objects, mock the JiraClient at the httpx level (`respx` works well), exercise `dispatch()` and the agent loop's recovery paths.
-6. **Pagination + smarter result limiting.** Teach `search_issues` to paginate, and decide how many issues to actually feed back to the model.
-7. **Swap to MCP.** Replace `tools.py` and `jira_client.py` with a connection to an MCP server like `sooperset/mcp-atlassian`. This is more about understanding what MCP buys you than about improving the project.
+See [ROADMAP.md](ROADMAP.md) for the planned next features and the rationale for their order. The "Known limitations" section above documents current gaps; the roadmap documents what is planned to close them and what new capabilities come after.
 
 ## A note on the spirit of the project
 
