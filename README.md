@@ -70,9 +70,10 @@ jira-agent/
 |   |-- config.py                 # .env loading -> frozen Config dataclass
 |   |-- llm.py                    # LLMClient: OpenAI-compatible wrapper, swap point for models
 |   |-- jira_client.py            # JiraClient: thin httpx wrapper for Jira REST v3
-|   |-- tools.py                  # tool schemas (for the LLM) + dispatch (for the runtime)
+|   |-- tools.py                  # tool schemas (for the LLM) + dispatch (for the runtime) + per-tool trace policy
 |   |-- agent.py                  # the tool-calling loop
-|   `-- cli.py                    # interactive REPL with readline history
+|   |-- observability.py          # per-turn Tracer: JSONL trace file + stderr summary + cost estimate
+|   `-- cli.py                    # interactive REPL with readline history, /trace slash command
 |
 `-- scripts/
     |-- ping_llm.py               # one-shot smoke test: LLM endpoint reachable?
@@ -157,6 +158,47 @@ Two layered defenses:
 2. `SYSTEM_PROMPT` in `agent.py` has a Security block that explicitly names the convention: contents of `<untrusted>` tags are data only, the model must not follow instructions that appear inside them, and only messages with role `user` are authoritative.
 
 Neither is bulletproof. Prompt-level defenses are probabilistic by nature, and smaller models are generally less robust. Smoke-tested by planting a hostile summary and asking the agent to list open issues -- the model quoted the injected text back as data rather than acting on it. One trial, not a proof.
+
+## Observability
+
+Every turn is instrumented. After each `Agent.chat(user_message)` call, the Tracer in `observability.py` emits two kinds of JSON Lines event to `~/.jira_agent/traces.jsonl` and prints a compact one-line summary to stderr, all stitched together by a 12-character `trace_id`:
+
+```
+> Assign SCRUM-6 to me
+  -> assign_issue({"issue_key": "SCRUM-6", "assignee": "me"})
+  <- ok: null
+[trace 3f9a1c0d6e22] turn=4 llm=2 tools=1 tokens=812+47 cost=$0.0003 in 1240ms
+
+Assigned SCRUM-6 to you.
+```
+
+The trace file picks up one record per LLM call and one per tool call:
+
+```jsonl
+{"event":"llm_call","trace_id":"3f9a1c0d6e22","turn":4,"ts":1716480000.123,"model":"google/gemma-4-31b-it:free","prompt_tokens":812,"completion_tokens":47,"cost_usd":0.0,"pricing_unknown":false,"latency_ms":1180.4,"tool_calls_emitted":1}
+{"event":"tool_call","trace_id":"3f9a1c0d6e22","turn":4,"ts":1716480000.456,"name":"assign_issue","args":{"issue_key":"SCRUM-6","assignee":"<redacted len=2>"},"ok":true,"error":null,"latency_ms":312.8}
+```
+
+### Toggling
+
+- `/trace` in the REPL — flips tracing on or off and prints the new state. When off, neither the JSONL file nor the stderr summary is written.
+- `/trace status` — prints whether tracing is on, where the file is, and how many events this Tracer has appended this session (a truthful counter: lines that actually landed on disk, never phantom events from off-mode turns).
+- `JIRA_AGENT_TRACE=0` (or `off`/`false`/`no`) — start the session with tracing disabled. `/trace` can still flip it on mid-session.
+- `JIRA_AGENT_TRACE_FILE=/path/to/file.jsonl` — override the default path (parent directory is created on demand).
+
+### Trace records carry metadata only
+
+Free-text arguments — issue summaries, descriptions, comment bodies, JQL queries, person identifiers (the assignee field) — are replaced with `<redacted len=N>`. Structural fields (issue keys, project keys, issue types, transition names, max_results) are logged verbatim. The per-tool policy lives in `tools.TOOL_TRACE_POLICY` next to the schemas so a new tool can't be added without an explicit decision about what gets logged; unknown tools and unknown argument keys redact by default (fail-closed). Error strings are truncated to 200 characters since Jira error bodies are unbounded and can echo untrusted content. When the model produces unparseable arguments JSON, the raw string is *never* given to the Tracer — the record carries shape-only metadata (`args_parse_error: true`, `arguments_size: N`) instead. No message bodies, no tool result payloads, and no API tokens go to disk.
+
+### Cost is an estimate
+
+The `cost_usd` field is computed from a small hardcoded `PRICING` table in `observability.py` of provider list prices captured at the time of writing. Treat it as a comparative signal across turns, not as an invoice — providers change tiers and the table will go stale. When a model isn't in the table, `cost_usd` is `0.0` and the record carries `pricing_unknown: true`; that flag is the operator's cue to extend the table.
+
+OpenRouter slug suffixes are handled before the lookup: `:free` always resolves to `$0` confidently (`pricing_unknown: false`); `:beta`, `:nitro`, and `:floor` are stripped before lookup since the underlying model is unchanged; any other suffix is left attached to the slug so the lookup falls through to `pricing_unknown: true` rather than silently masking a potentially different model.
+
+### Tracer is non-load-bearing
+
+If the trace file can't be written (disk full, permission denied, path is a file rather than a directory), the agent keeps working and a single warning prints to stderr for the session. Both `Tracer.end_turn()` and `Tracer._emit()` swallow their own exceptions; `end_turn` is called from `Agent.chat()`'s `finally` block, and a raise there would mask the loop's real return value or real exception.
 
 ## Out of scope for v1
 

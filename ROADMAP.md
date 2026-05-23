@@ -9,7 +9,7 @@ builds on. You can reorder freely, but if in doubt, work top to bottom.
 
 ---
 
-## 1. Agent observability
+## 1. Agent observability (landed in v0.2.0)
 
 **What.** Structured logging plus a per-turn trace: every LLM call and tool
 call with token counts (prompt + completion), latency, and estimated cost. A
