@@ -11,3 +11,7 @@ wheels/
 
 # Secrets
 .env
+
+# Trace output (default is ~/.jira_agent/, but JIRA_AGENT_TRACE_FILE can
+# point at a path inside the checkout)
+.jira_agent/

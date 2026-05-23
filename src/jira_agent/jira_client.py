@@ -6,7 +6,30 @@ from .config import Config
 
 
 class JiraError(Exception):
-    """Raised when Jira returns a non-2xx response. Carries the body for debugging."""
+    """Raised when Jira returns a non-2xx response or a request can't complete.
+
+    Carries the response body in the *message* (used by the agent loop so the
+    model can read the error and self-correct), and the same details as
+    structured attributes (used by the Tracer in observability.py, which
+    persists only the structured fields and never the response body).
+
+    ``status_code`` is None for failures that did not produce an HTTP response
+    (e.g. "No user found matching <q>" from assign_issue, where the failure
+    is a logical empty-result, not an HTTP error).
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        method: str | None = None,
+        path: str | None = None,
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.method = method
+        self.path = path
+        self.status_code = status_code
 
 
 class JiraClient:
@@ -37,7 +60,12 @@ class JiraClient:
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
         resp = self._client.request(method, f"{self._base}{path}", **kwargs)
         if resp.status_code >= 400:
-            raise JiraError(f"{method} {path} -> {resp.status_code}: {resp.text}")
+            raise JiraError(
+                f"{method} {path} -> {resp.status_code}: {resp.text}",
+                method=method,
+                path=path,
+                status_code=resp.status_code,
+            )
         if resp.status_code == 204 or not resp.content:
             return None
         return resp.json()
