@@ -113,14 +113,14 @@ def _redact_args(tool_name: str, args: dict) -> dict:
     return {k: (v if k in safe else _redacted(v)) for k, v in args.items()}
 
 
-def _truncate_error(s: str | None, limit: int = 200) -> str | None:
-    """Bound error strings. Jira error bodies are unbounded and can carry
-    untrusted free text; this caps them so they don't bloat traces."""
-    if s is None:
-        return None
-    if len(s) <= limit:
-        return s
-    return s[: limit - 3] + "..."
+# Error strings produced by ``tools.dispatch`` (and by ``JiraClient._request``
+# below it) embed Jira response bodies, the assignee query the user typed,
+# requested transition names, and admin-configured workflow names — all of
+# which are untrusted free text we promised never to persist. The Tracer
+# therefore records *only* structured error metadata derived from the
+# dispatch envelope (``error_type``, ``error_status``), never the message
+# itself. The rich string still flows to the model via the chat history so
+# self-correction works; it just doesn't go to disk.
 
 
 @dataclass
@@ -236,17 +236,23 @@ class Tracer:
         name: str,
         args: dict | None,
         ok: bool,
-        error: str | None,
         latency_ms: float,
+        error_type: str | None = None,
+        error_status: int | None = None,
         raw_args_size: int = 0,
     ) -> None:
         """Record a tool dispatch.
 
         ``args=None`` is the explicit signal that the agent could not
-        parse ``tool_call.function.arguments``; in that case the record
-        carries shape-only metadata (``args_parse_error``, ``arg_keys``,
-        ``arguments_size``) and the raw malformed string is *never*
-        given to the tracer.
+        parse ``tool_call.function.arguments``; the record then carries
+        shape-only metadata (``args_parse_error``, ``arg_keys``,
+        ``arguments_size``) and the raw malformed string is never given
+        to the tracer.
+
+        Failures (``ok=False``) emit ``error_type`` (always — the
+        exception classname) and, when known, ``error_status`` (HTTP
+        status from JiraError). The raw exception message is *not*
+        accepted as a parameter — see the module-level note above.
         """
         if self._current is not None:
             self._current.tool_calls += 1
@@ -259,7 +265,10 @@ class Tracer:
         else:
             record["args"] = _redact_args(name, args)
         record["ok"] = ok
-        record["error"] = _truncate_error(error)
+        if not ok:
+            record["error_type"] = error_type or "Unknown"
+            if error_status is not None:
+                record["error_status"] = error_status
         record["latency_ms"] = latency_ms
         self._emit(record)
 

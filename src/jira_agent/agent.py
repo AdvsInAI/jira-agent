@@ -110,12 +110,18 @@ class Agent:
                         # given to the tracer — it could carry the model's
                         # confused attempt at user/Jira free text, which
                         # we treat the same as any other sensitive arg.
-                        result = {"ok": False, "error": f"Invalid JSON arguments: {e}"}
+                        # The rich error text still goes to the model via
+                        # `result` so it can self-correct.
+                        result = {
+                            "ok": False,
+                            "error": f"Invalid JSON arguments: {e}",
+                            "error_type": "JSONDecodeError",
+                        }
                         self._tracer.record_tool_call(
                             name=name,
                             args=None,
                             ok=False,
-                            error=result["error"],
+                            error_type="JSONDecodeError",
                             latency_ms=(time.monotonic() - t0) * 1000,
                             raw_args_size=len(raw),
                         )
@@ -126,7 +132,8 @@ class Agent:
                             name=name,
                             args=args,
                             ok=result.get("ok", False),
-                            error=result.get("error"),
+                            error_type=result.get("error_type"),
+                            error_status=result.get("error_status"),
                             latency_ms=(time.monotonic() - t0) * 1000,
                         )
                         args_for_observer = args

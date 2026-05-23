@@ -262,18 +262,45 @@ TOOL_TRACE_POLICY: dict[str, dict[str, list[str]]] = {
 
 
 def dispatch(tool_name: str, arguments: dict[str, Any], jira: JiraClient) -> dict:
-    """Run a tool call and return a {ok, result|error} envelope for the LLM."""
+    """Run a tool call and return a {ok, result|error} envelope for the LLM.
+
+    Failure envelopes carry both a human-readable ``error`` string (consumed
+    by the agent loop / shown to the model so it can self-correct) and
+    structured ``error_type``/``error_status`` fields (consumed by
+    observability.Tracer, which persists *only* the structured fields and
+    never the raw message — that string can echo Jira response bodies,
+    assignee queries, and transition names).
+    """
     handler = HANDLERS.get(tool_name)
     if handler is None:
-        return {"ok": False, "error": f"Unknown tool: {tool_name}"}
+        return {
+            "ok": False,
+            "error": f"Unknown tool: {tool_name}",
+            "error_type": "UnknownTool",
+        }
     try:
         result = handler(jira, **arguments)
         return {"ok": True, "result": result}
     except JiraError as e:
-        return {"ok": False, "error": str(e)}
+        envelope: dict[str, Any] = {
+            "ok": False,
+            "error": str(e),
+            "error_type": "JiraError",
+        }
+        if e.status_code is not None:
+            envelope["error_status"] = e.status_code
+        return envelope
     except TypeError as e:
-        return {"ok": False, "error": f"Invalid arguments: {e}"}
+        return {
+            "ok": False,
+            "error": f"Invalid arguments: {e}",
+            "error_type": "TypeError",
+        }
     except Exception as e:
         # Catch-all so dispatch() is total: agent.py relies on every tool_call
         # producing a tool response, otherwise the chat history becomes invalid.
-        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        return {
+            "ok": False,
+            "error": f"{type(e).__name__}: {e}",
+            "error_type": type(e).__name__,
+        }

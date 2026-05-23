@@ -176,7 +176,8 @@ The trace file picks up one record per LLM call and one per tool call:
 
 ```jsonl
 {"event":"llm_call","trace_id":"3f9a1c0d6e22","turn":4,"ts":1716480000.123,"model":"google/gemma-4-31b-it:free","prompt_tokens":812,"completion_tokens":47,"cost_usd":0.0,"pricing_unknown":false,"latency_ms":1180.4,"tool_calls_emitted":1}
-{"event":"tool_call","trace_id":"3f9a1c0d6e22","turn":4,"ts":1716480000.456,"name":"assign_issue","args":{"issue_key":"SCRUM-6","assignee":"<redacted len=2>"},"ok":true,"error":null,"latency_ms":312.8}
+{"event":"tool_call","trace_id":"3f9a1c0d6e22","turn":4,"ts":1716480000.456,"name":"assign_issue","args":{"issue_key":"SCRUM-6","assignee":"<redacted len=2>"},"ok":true,"latency_ms":312.8}
+{"event":"tool_call","trace_id":"3f9a1c0d6e22","turn":4,"ts":1716480000.910,"name":"transition_issue","args":{"issue_key":"SCRUM-6","transition_name":"Done"},"ok":false,"error_type":"JiraError","error_status":400,"latency_ms":284.0}
 ```
 
 ### Toggling
@@ -188,7 +189,9 @@ The trace file picks up one record per LLM call and one per tool call:
 
 ### Trace records carry metadata only
 
-Free-text arguments — issue summaries, descriptions, comment bodies, JQL queries, person identifiers (the assignee field) — are replaced with `<redacted len=N>`. Structural fields (issue keys, project keys, issue types, transition names, max_results) are logged verbatim. The per-tool policy lives in `tools.TOOL_TRACE_POLICY` next to the schemas so a new tool can't be added without an explicit decision about what gets logged; unknown tools and unknown argument keys redact by default (fail-closed). Error strings are truncated to 200 characters since Jira error bodies are unbounded and can echo untrusted content. When the model produces unparseable arguments JSON, the raw string is *never* given to the Tracer — the record carries shape-only metadata (`args_parse_error: true`, `arguments_size: N`) instead. No message bodies, no tool result payloads, and no API tokens go to disk.
+Free-text arguments — issue summaries, descriptions, comment bodies, JQL queries, person identifiers (the assignee field) — are replaced with `<redacted len=N>`. Structural fields (issue keys, project keys, issue types, transition names, max_results) are logged verbatim. The per-tool policy lives in `tools.TOOL_TRACE_POLICY` next to the schemas so a new tool can't be added without an explicit decision about what gets logged; unknown tools and unknown argument keys redact by default (fail-closed). When the model produces unparseable arguments JSON, the raw string is *never* given to the Tracer — the record carries shape-only metadata (`args_parse_error: true`, `arguments_size: N`) instead.
+
+Errors are recorded as **structured metadata only**: `error_type` (the exception classname, e.g. `JiraError`, `JSONDecodeError`, `TypeError`) and, for HTTP failures, `error_status` (the status code). The raw exception message is *not* written to disk — it would otherwise echo Jira response bodies, the assignee query the user typed, requested transition names, and admin-configured workflow names. The rich error text still flows to the model through the chat history so self-correction works; it just doesn't reach the trace file. No message bodies, no tool result payloads, no API tokens go to disk.
 
 ### Cost is an estimate
 
