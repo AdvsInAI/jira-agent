@@ -1,17 +1,14 @@
-"""Interactive CLI: a REPL that pipes user input through the Agent.
+"""Interactive Jira agent CLI with MCP-backed tools and write approval."""
 
-Tool calls are surfaced inline so you can watch the agent's reasoning step
-by step.
-
-Run: uv run jira-agent
-  (or: uv run python -m jira_agent.cli)
-"""
-
+import argparse
+import asyncio
 import atexit
 import json
 import readline
 import sys
 from pathlib import Path
+
+from mcp.types import Tool
 
 from .agent import Agent
 from .config import load_config
@@ -49,34 +46,68 @@ def _show_tool_call(name: str, args: dict, result: dict) -> None:
         print(f"  <- error: {result.get('error')}", file=sys.stderr)
 
 
-def main() -> None:
-    cfg = load_config()
+def _confirm_tool_call(tool: Tool | None, args: dict) -> bool:
+    label = (tool.title or tool.name) if tool is not None else "Unknown tool"
+    name = tool.name if tool is not None else "unknown"
+    print(f"\nProposed Jira write: {label} ({name})", file=sys.stderr)
+    print(json.dumps(args, ensure_ascii=False, indent=2), file=sys.stderr)
+    try:
+        answer = input("Approve? [y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print(file=sys.stderr)
+        return False
+    return answer in {"y", "yes"}
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="LLM-driven Jira agent")
+    parser.add_argument(
+        "--yolo",
+        action="store_true",
+        help="run Jira write tools without asking for confirmation",
+    )
+    return parser.parse_args()
+
+
+async def _run(args: argparse.Namespace) -> None:
+    config = load_config()
     _setup_readline()
-    agent = Agent(cfg, on_tool_call=_show_tool_call)
+    approver = (lambda tool, call_args: True) if args.yolo else _confirm_tool_call
 
-    print(f"Jira agent ready. Model: {cfg.llm_model}")
-    print("Type a request. Ctrl+D or /exit to quit.\n")
+    async with Agent(
+        config,
+        on_tool_call=_show_tool_call,
+        approve_tool=approver,
+    ) as agent:
+        print(f"Jira agent ready. Model: {config.llm.llm_model}")
+        if args.yolo:
+            print("WARNING: --yolo enabled; Jira writes will not be confirmed.")
+        print("Type a request. Ctrl+D or /exit to quit.\n")
 
-    exit_commands = {"/exit", "/quit"}
-    while True:
-        try:
-            user_input = input("> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            break
-        if not user_input:
-            continue
-        if user_input in exit_commands:
-            break
-        try:
-            reply = agent.chat(user_input)
-        except KeyboardInterrupt:
-            print("\n(interrupted)", file=sys.stderr)
-            continue
-        except Exception as e:
-            print(f"Error: {e}", file=sys.stderr)
-            continue
-        print(f"\n{reply}\n")
+        exit_commands = {"/exit", "/quit"}
+        while True:
+            try:
+                user_input = input("> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+            if not user_input:
+                continue
+            if user_input in exit_commands:
+                break
+            try:
+                reply = await agent.chat(user_input)
+            except KeyboardInterrupt:
+                print("\n(interrupted)", file=sys.stderr)
+                continue
+            except Exception as exc:
+                print(f"Error: {exc}", file=sys.stderr)
+                continue
+            print(f"\n{reply}\n")
+
+
+def main() -> None:
+    asyncio.run(_run(_parse_args()))
 
 
 if __name__ == "__main__":

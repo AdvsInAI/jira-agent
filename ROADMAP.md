@@ -7,6 +7,10 @@ work — not toward making this a useful Jira admin tool.
 The order below is pedagogical: each step gives you something the next one
 builds on. You can reorder freely, but if in doubt, work top to bottom.
 
+Current status: steps 2 and 3 were completed early as prerequisites for the
+MCP migration. The stdio MCP server and runtime-discovering agent integration
+described under "Where to go after these" are also complete.
+
 ---
 
 ## 1. Agent observability
@@ -32,10 +36,13 @@ all subsequent features measurable.
 
 ## 2. Evaluation harness + tests
 
+**Status: Complete.** Jira REST unit tests, in-memory MCP contract tests, a
+packaged stdio smoke test, and canned agent eval scenarios live in `tests/`.
+
 **What.** Two layers of automated checks:
 
-- **Unit tests** for `dispatch()` and `JiraClient` methods (using `respx` or
-  hand-rolled HTTP mocks).
+- **Unit tests** for `JiraClient` methods and MCP tool contracts using `respx`
+  and the MCP SDK's in-memory client.
 - **Eval scenarios** that script a sequence of canned `ChatCompletionMessage`
   objects and assert the agent calls the right tool with the right arguments
   — e.g., "user asks to create a bug" → expect `create_issue(project_key=...,
@@ -45,8 +52,7 @@ all subsequent features measurable.
 *evals* are the agent-specific one. With them, every later refactor is safe,
 and you can measure when the agent gets worse — not just whether it crashes.
 
-**Touches.** New `tests/` directory; `pytest` and `respx` added as dev
-dependencies. The mocking patterns here get reused by every later feature.
+**Touches.** `tests/`; `pytest`, `pytest-asyncio`, and `respx` dev dependencies.
 
 **Rough scope.** ~150–250 lines including fixtures.
 
@@ -54,9 +60,13 @@ dependencies. The mocking patterns here get reused by every later feature.
 
 ## 3. Human-in-the-loop approval
 
+**Status: Complete.** MCP annotations classify tools. The bundled CLI previews
+and confirms every tool not explicitly marked read-only; `--yolo` is the
+explicit bypass.
+
 **What.** Classify every tool as read or write. Before any write tool
 (`create_issue`, `transition_issue`, `add_comment`, `assign_issue`) runs, the
-CLI shows a preview of the action and asks `[y/N]`. On `n`, the dispatch
+CLI shows a preview of the action and asks `[y/N]`. On `n`, the agent
 returns a structured "user declined" error and the model can revise.
 Optionally, a `--yolo` flag bypasses approval for trusted sessions.
 
@@ -66,8 +76,8 @@ the project's biggest product gap. You will see firsthand how the model
 behaves when its actions get rejected — a much deeper lesson than reading
 about it.
 
-**Touches.** `tools.py` (tag tool schemas with a risk tier), `agent.py`
-(approval hook around `dispatch`), `cli.py` (prompt UI and preview format).
+**Touches.** MCP tool annotations, `agent.py` approval policy, and `cli.py`
+prompt UI.
 
 **Rough scope.** ~60–90 lines. The hardest part is the preview format, not
 the gate itself.
@@ -90,9 +100,9 @@ patterns in production agents. It is the seed of scratchpads, working memory,
 and planner state. Concretely, it lets the model resolve "comment on that
 bug" reliably and lets you shrink the message history you have to replay.
 
-**Touches.** New `session.py` (the state class and update helpers),
-`tools.py` (handlers write to it on success), `agent.py` (inject into the
-prompt or expose as a tool).
+**Touches.** New `session.py` (the state class and update helpers), MCP tool
+handlers (write to it on success), and `agent.py` (inject into the prompt or
+expose as a tool).
 
 **Rough scope.** ~80–120 lines.
 
@@ -127,8 +137,8 @@ Patterns that build naturally on 1–5 and would be reasonable next steps:
 
 - **Streaming responses** — incremental token rendering and tool-call delta
   assembly.
-- **MCP integration** — replace `tools.py` / `jira_client.py` with an MCP
-  server and let the agent discover tools at runtime.
+- **MCP integration — complete** — Jira tools now live behind a local stdio
+  MCP server and the agent discovers schemas and annotations at runtime.
 - **Multi-step planning** — a separate planner LLM call that produces a tool
   sequence before execution, with the executor LLM running it.
 
