@@ -93,7 +93,9 @@ class Agent:
                     return response.content or ""
                 for tool_call in response.tool_calls:
                     await self._handle_tool_call(tool_call)
-            return "(stopped: reached max tool-call iterations)"
+            stopped = "(stopped: reached max tool-call iterations)"
+            self._messages.append({"role": "assistant", "content": stopped})
+            return stopped
         finally:
             self._tracer.end_turn()
 
@@ -113,26 +115,34 @@ class Agent:
             }
         else:
             trace_args = args
-            try:
-                approved = not self._tools.requires_approval(name) or self._approve_tool(
-                    self._tools.get_tool(name), args
-                )
-            except Exception as exc:
+            tool = self._tools.get_tool(name)
+            if tool is None:
                 result = {
                     "ok": False,
-                    "error": f"Approval failed: {type(exc).__name__}: {exc}",
-                    "error_type": type(exc).__name__,
+                    "error": f"Unknown tool: {name}",
+                    "error_type": "UnknownTool",
                 }
             else:
-                result = (
-                    await self._tools.call(name, args)
-                    if approved
-                    else {
+                try:
+                    approved = not self._tools.requires_approval(
+                        name
+                    ) or self._approve_tool(tool, args)
+                except Exception as exc:
+                    result = {
                         "ok": False,
-                        "error": f"User declined tool call: {name}",
-                        "error_type": "ApprovalDeclined",
+                        "error": f"Approval failed: {type(exc).__name__}: {exc}",
+                        "error_type": type(exc).__name__,
                     }
-                )
+                else:
+                    result = (
+                        await self._tools.call(name, args)
+                        if approved
+                        else {
+                            "ok": False,
+                            "error": f"User declined tool call: {name}",
+                            "error_type": "ApprovalDeclined",
+                        }
+                    )
 
         self._tracer.record_tool_call(
             name=name,

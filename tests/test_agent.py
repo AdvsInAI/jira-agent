@@ -232,6 +232,29 @@ async def test_malformed_arguments_still_produce_tool_response() -> None:
 
 
 @pytest.mark.asyncio
+async def test_unknown_tool_is_rejected_without_prompting_or_dispatch() -> None:
+    llm = FakeLLM([
+        response(tool_name="delete_everything"),
+        response(content="That tool is unavailable."),
+    ])
+    tools = FakeTools()
+    approvals: list[str] = []
+    agent = Agent(
+        config(),
+        llm=llm,
+        tools=tools,
+        approve_tool=lambda tool, args: approvals.append(tool.name) or True,
+    )
+
+    async with agent:
+        assert await agent.chat("Delete everything") == "That tool is unavailable."
+
+    assert approvals == []
+    assert tools.calls == []
+    assert "Unknown tool: delete_everything" in llm.requests[1][0][-1]["content"]
+
+
+@pytest.mark.asyncio
 async def test_iteration_limit_stops_runaway_tool_loop() -> None:
     llm = FakeLLM(
         [response(tool_name="search_issues", arguments='{"jql":"x"}') for _ in range(MAX_ITERATIONS)]
@@ -244,3 +267,15 @@ async def test_iteration_limit_stops_runaway_tool_loop() -> None:
 
     assert reply == "(stopped: reached max tool-call iterations)"
     assert len(tools.calls) == MAX_ITERATIONS
+    assert agent._messages[-1] == {
+        "role": "assistant",
+        "content": "(stopped: reached max tool-call iterations)",
+    }
+    assistant_calls = [
+        message for message in agent._messages
+        if message["role"] == "assistant" and message.get("tool_calls")
+    ]
+    tool_responses = [
+        message for message in agent._messages if message["role"] == "tool"
+    ]
+    assert len(assistant_calls) == len(tool_responses) == MAX_ITERATIONS

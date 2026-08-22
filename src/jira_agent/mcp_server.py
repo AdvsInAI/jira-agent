@@ -244,6 +244,8 @@ async def _run_stdio() -> None:
     async with anyio.create_task_group() as tasks:
         tasks.start_soon(read_stdin)
         tasks.start_soon(write_stdout)
+        # TODO: Revisit this private bridge when the SDK stdio reader no
+        # longer stalls in restricted runtimes; keep mcp pinned until then.
         await mcp._lowlevel_server.run(
             incoming,
             outgoing,

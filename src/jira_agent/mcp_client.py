@@ -1,5 +1,6 @@
 """Client-side adapter from MCP tools to OpenAI-compatible tool calls."""
 
+import os
 import sys
 from typing import Any
 
@@ -7,6 +8,18 @@ from mcp import Client, StdioServerParameters, stdio_client
 from mcp.types import TextContent, Tool
 
 from .config import JiraConfig
+
+FORWARDED_ENVIRONMENT = (
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "REQUESTS_CA_BUNDLE",
+    "SSL_CERT_FILE",
+    "LANG",
+    "LC_ALL",
+    "PYTHONWARNINGS",
+)
 
 
 class MCPToolClient:
@@ -16,14 +29,22 @@ class MCPToolClient:
 
     @classmethod
     def for_jira(cls, config: JiraConfig) -> "MCPToolClient":
-        params = StdioServerParameters(
-            command=sys.executable,
-            args=["-m", "jira_agent.mcp_server"],
-            env={
+        environment = {
+            name: value
+            for name in FORWARDED_ENVIRONMENT
+            if (value := os.environ.get(name)) is not None
+        }
+        environment.update(
+            {
                 "JIRA_BASE_URL": config.jira_base_url,
                 "JIRA_EMAIL": config.jira_email,
                 "JIRA_API_TOKEN": config.jira_api_token,
-            },
+            }
+        )
+        params = StdioServerParameters(
+            command=sys.executable,
+            args=["-m", "jira_agent.mcp_server"],
+            env=environment,
         )
         return cls(stdio_client(params))
 
@@ -72,15 +93,23 @@ class MCPToolClient:
         try:
             result = await self._client.call_tool(name, arguments)
         except Exception as exc:
-            return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            return {
+                "ok": False,
+                "error": f"{type(exc).__name__}: {exc}",
+                "error_type": type(exc).__name__,
+            }
 
         if result.is_error:
             message = _text_content(result.content) or "MCP tool call failed"
-            return {"ok": False, "error": message}
+            return {
+                "ok": False,
+                "error": message,
+                "error_type": "MCPToolError",
+            }
 
         payload: Any = result.structured_content
         if payload is None:
-            payload = _text_content(result.content)
+            payload = _text_content(result.content) or None
         return {"ok": True, "result": payload}
 
 

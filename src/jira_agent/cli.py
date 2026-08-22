@@ -52,7 +52,8 @@ def _confirm_tool_call(tool: Tool | None, args: dict) -> bool:
     print(f"\nProposed Jira write: {label} ({name})", file=sys.stderr)
     print(json.dumps(args, ensure_ascii=False, indent=2), file=sys.stderr)
     try:
-        answer = input("Approve? [y/N] ").strip().lower()
+        print("Approve? [y/N] ", end="", file=sys.stderr, flush=True)
+        answer = input().strip().lower()
     except (EOFError, KeyboardInterrupt):
         print(file=sys.stderr)
         return False

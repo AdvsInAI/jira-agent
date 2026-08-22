@@ -57,36 +57,14 @@ src/jira_agent/
 |-- jira_client.py    # thin synchronous Jira REST API v3 client
 |-- llm.py            # AsyncOpenAI-compatible model client
 |-- mcp_client.py     # stdio lifecycle, discovery, and result adapter
-`-- mcp_server.py     # typed MCP tools and Jira-client lifespan
+|-- mcp_server.py     # typed MCP tools and Jira-client lifespan
+`-- observability.py  # JSONL tracing, redaction, and cost estimates
 
 scripts/
 |-- ping_llm.py
 `-- ping_jira.py
 
 tests/                # REST unit tests, MCP contracts, and agent evals
-```
-jira-agent/
-|
-|-- pyproject.toml                # uv-managed; deps: httpx, openai, python-dotenv
-|-- uv.lock                       # pinned dependency tree
-|-- .python-version               # 3.12
-|-- .env.example                  # template; copy to .env (gitignored)
-|-- .gitignore
-|
-|-- src/jira_agent/
-|   |-- __init__.py               # empty marker; package entry point is cli:main
-|   |-- config.py                 # .env loading -> frozen Config dataclass
-|   |-- llm.py                    # LLMClient: OpenAI-compatible wrapper, swap point for models
-|   |-- jira_client.py            # JiraClient: thin httpx wrapper for Jira REST v3
-|   |-- mcp_client.py             # runtime tool discovery and result adapter
-|   |-- mcp_server.py             # typed Jira tools exposed over stdio
-|   |-- agent.py                  # the tool-calling loop
-|   |-- observability.py          # per-turn Tracer: JSONL trace file + stderr summary + cost estimate
-|   `-- cli.py                    # interactive REPL with readline history, /trace slash command
-|
-`-- scripts/
-    |-- ping_llm.py               # one-shot smoke test: LLM endpoint reachable?
-    `-- ping_jira.py              # one-shot smoke test: Jira auth working?
 ```
 
 The package installs two commands:
@@ -96,10 +74,7 @@ The package installs two commands:
 
 ## MCP tools
 
-The server exposes five typed tools. MCP derives their JSON Schemas from Python type annotations and publishes behavioral annotations for host approval decisions.
-
-| Tool | Jira operation | MCP behavior |
-The `on_tool_call` observer in step 6 is what prints the `->` and `<-` lines you see in the terminal.
+The server exposes five typed tools. MCP derives their JSON Schemas from Python type annotations and publishes behavioral annotations for host approval decisions. See [Tool reference](#tool-reference) for the complete list.
 
 ## Design decisions
 
@@ -114,14 +89,6 @@ The host discovers tools from a local MCP server at runtime. The server keeps th
 - The model is a one-line `.env` change (`LLM_MODEL`).
 - The provider is a one-line `.env` change (`LLM_BASE_URL`).
 - No code edit is required to point at a local Ollama, a vLLM cluster, or a different aggregator. The wrapper is provider-agnostic; `LLM_*` names reflect that.
-
-### Five tools, no destructive bulk operations in v1
-
-The tools are: `create_issue`, `search_issues`, `transition_issue`, `add_comment`, `assign_issue`. Each operates on at most one issue at a time. No bulk delete, no bulk transition, no destructive operations on whole projects. This is a deliberate v1 scope -- adding a bulk tool to an LLM-driven agent has a much wider blast radius than adding a single-issue one.
-
-### Async orchestration with a synchronous Jira client
-
-The host, LLM client, and MCP transport are asynchronous. The local MCP server uses a synchronous `httpx` Jira client because it handles one request at a time for this single-user CLI.
 
 ### Atlassian Document Format (ADF) wrapper
 
@@ -215,7 +182,7 @@ The four write tools (`create_issue`, `transition_issue`, `add_comment`, `assign
 
 Both threats are mitigated by confirming writes before they cross the MCP boundary. Approval defaults to no; use `--yolo` only when the session and Jira data are trusted.
 
-## The five tools
+## Tool reference
 
 Defined as typed functions in `src/jira_agent/mcp_server.py`; schemas and behavioral annotations are discovered over MCP at startup.
 
@@ -319,14 +286,6 @@ The suite covers:
 Automated tests never access or modify a real Jira site.
 
 ## Design notes
-
-### Runtime discovery
-
-The agent knows no Jira tool names at compile time. `MCPToolClient` obtains the server's current definitions on connection and retains MCP annotations separately from the OpenAI schema sent to the model.
-
-### Async host, synchronous Jira client
-
-The MCP and LLM host path is asynchronous because the MCP client lifecycle is async. Jira REST calls remain synchronous inside the local, single-user stdio server to keep the HTTP layer easy to debug. A concurrent network server would warrant converting `JiraClient` to async.
 
 ### Error recovery
 

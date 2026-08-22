@@ -10,6 +10,7 @@ authors = [
 ]
 dependencies = [
     "httpx>=0.28.1",
+    # Keep pinned while mcp_server.py uses the SDK's private stdio bridge.
     "mcp==2.0.0",
     "openai>=2.36.0",
     "pydantic>=2.12.0",
