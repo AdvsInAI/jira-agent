@@ -13,7 +13,7 @@ described under "Where to go after these" are also complete.
 
 ---
 
-## 1. Agent observability
+## 1. Agent observability (landed in v0.2.0)
 
 **What.** Structured logging plus a per-turn trace: every LLM call and tool
 call with token counts (prompt + completion), latency, and estimated cost. A

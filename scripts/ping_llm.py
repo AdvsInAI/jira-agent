@@ -15,8 +15,15 @@ async def _main() -> None:
     print(f"Endpoint: {cfg.llm.llm_base_url}")
     print(f"Model: {cfg.llm.llm_model}")
     print("Sending: 'Reply with exactly: pong'")
-    msg = await llm.chat([{"role": "user", "content": "Reply with exactly: pong"}])
+    msg, telemetry = await llm.chat(
+        [{"role": "user", "content": "Reply with exactly: pong"}]
+    )
     print(f"Got: {msg.content!r}")
+    print(
+        f"Tokens: prompt={telemetry['prompt_tokens']} "
+        f"completion={telemetry['completion_tokens']} "
+        f"latency_ms={telemetry['latency_ms']:.0f}"
+    )
 
 
 def main() -> None:

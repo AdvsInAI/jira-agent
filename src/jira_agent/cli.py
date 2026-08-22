@@ -1,4 +1,4 @@
-"""Interactive Jira agent CLI with MCP-backed tools and write approval."""
+"""Interactive Jira agent CLI with approvals and per-turn tracing."""
 
 import argparse
 import asyncio
@@ -12,6 +12,7 @@ from mcp.types import Tool
 
 from .agent import Agent
 from .config import load_config
+from .observability import tracer_from_env
 
 HISTORY_FILE = Path.home() / ".jira_agent_history"
 HISTORY_LENGTH = 1000
@@ -35,8 +36,7 @@ def _save_history() -> None:
 
 
 def _show_tool_call(name: str, args: dict, result: dict) -> None:
-    args_str = json.dumps(args, ensure_ascii=False)
-    print(f"  -> {name}({args_str})", file=sys.stderr)
+    print(f"  -> {name}({json.dumps(args, ensure_ascii=False)})", file=sys.stderr)
     if result.get("ok"):
         preview = json.dumps(result["result"], ensure_ascii=False)
         if len(preview) > 300:
@@ -59,11 +59,33 @@ def _confirm_tool_call(tool: Tool | None, args: dict) -> bool:
     return answer in {"y", "yes"}
 
 
+def _tracing_state_line(tracer) -> str:
+    return f"tracing: on -> {tracer.path}" if tracer.enabled else "tracing: off"
+
+
+def _handle_trace_command(tracer, sub: str) -> None:
+    if not sub:
+        was_on = tracer.enabled
+        if tracer.toggle():
+            print(f"tracing: on -> {tracer.path} (was off)", file=sys.stderr)
+        else:
+            assert was_on
+            print("tracing: off (was on)", file=sys.stderr)
+    elif sub == "status":
+        state = "on" if tracer.enabled else "off"
+        print(
+            f"tracing: {state} -> {tracer.path}  "
+            f"({tracer.event_count} events this session)",
+            file=sys.stderr,
+        )
+    else:
+        print(f"unknown /trace subcommand: {sub!r}", file=sys.stderr)
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="LLM-driven Jira agent")
     parser.add_argument(
-        "--yolo",
-        action="store_true",
+        "--yolo", action="store_true",
         help="run Jira write tools without asking for confirmation",
     )
     return parser.parse_args()
@@ -72,19 +94,18 @@ def _parse_args() -> argparse.Namespace:
 async def _run(args: argparse.Namespace) -> None:
     config = load_config()
     _setup_readline()
+    tracer = tracer_from_env()
     approver = (lambda tool, call_args: True) if args.yolo else _confirm_tool_call
 
     async with Agent(
-        config,
-        on_tool_call=_show_tool_call,
-        approve_tool=approver,
+        config, on_tool_call=_show_tool_call, approve_tool=approver, tracer=tracer
     ) as agent:
         print(f"Jira agent ready. Model: {config.llm.llm_model}")
+        print(_tracing_state_line(tracer))
         if args.yolo:
             print("WARNING: --yolo enabled; Jira writes will not be confirmed.")
         print("Type a request. Ctrl+D or /exit to quit.\n")
 
-        exit_commands = {"/exit", "/quit"}
         while True:
             try:
                 user_input = input("> ").strip()
@@ -93,8 +114,15 @@ async def _run(args: argparse.Namespace) -> None:
                 break
             if not user_input:
                 continue
-            if user_input in exit_commands:
+            if user_input in {"/exit", "/quit"}:
                 break
+            if user_input.startswith("/"):
+                head, _, tail = user_input.partition(" ")
+                if head == "/trace":
+                    _handle_trace_command(tracer, tail.strip())
+                else:
+                    print(f"unknown command: {head}", file=sys.stderr)
+                continue
             try:
                 reply = await agent.chat(user_input)
             except KeyboardInterrupt:

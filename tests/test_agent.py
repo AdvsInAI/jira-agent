@@ -34,7 +34,12 @@ class FakeLLM:
 
     async def chat(self, messages, tools=None):
         self.requests.append((list(messages), tools))
-        return self.responses.pop(0)
+        return self.responses.pop(0), {
+            "model": "test-model",
+            "prompt_tokens": 1,
+            "completion_tokens": 1,
+            "latency_ms": 1.0,
+        }
 
 
 class FakeTools:
@@ -87,6 +92,26 @@ class FakeTools:
         return {"ok": True, "result": {"called": name}}
 
 
+class FakeTracer:
+    def __init__(self) -> None:
+        self.started = 0
+        self.ended = 0
+        self.llm_calls: list[dict] = []
+        self.tool_calls: list[dict] = []
+
+    def start_turn(self) -> None:
+        self.started += 1
+
+    def end_turn(self) -> None:
+        self.ended += 1
+
+    def record_llm_call(self, **event) -> None:
+        self.llm_calls.append(event)
+
+    def record_tool_call(self, **event) -> None:
+        self.tool_calls.append(event)
+
+
 @pytest.mark.asyncio
 async def test_read_tool_runs_without_approval_and_is_discovered() -> None:
     llm = FakeLLM(
@@ -117,6 +142,26 @@ async def test_read_tool_runs_without_approval_and_is_discovered() -> None:
 
 
 @pytest.mark.asyncio
+async def test_async_mcp_calls_are_traced() -> None:
+    llm = FakeLLM([
+        response(tool_name="search_issues", arguments='{"jql":"project = TEST"}'),
+        response(content="Found it."),
+    ])
+    tracer = FakeTracer()
+    agent = Agent(config(), llm=llm, tools=FakeTools(), tracer=tracer)
+
+    async with agent:
+        assert await agent.chat("Find issues") == "Found it."
+
+    assert tracer.started == 1
+    assert tracer.ended == 1
+    assert len(tracer.llm_calls) == 2
+    assert tracer.tool_calls[0]["name"] == "search_issues"
+    assert tracer.tool_calls[0]["args"] == {"jql": "project = TEST"}
+    assert tracer.tool_calls[0]["ok"] is True
+
+
+@pytest.mark.asyncio
 async def test_declined_write_is_not_called_and_model_receives_error() -> None:
     llm = FakeLLM(
         [
@@ -141,6 +186,7 @@ async def test_declined_write_is_not_called_and_model_receives_error() -> None:
     assert observed[0] == {
         "ok": False,
         "error": "User declined tool call: create_issue",
+        "error_type": "ApprovalDeclined",
     }
     tool_message = llm.requests[1][0][-1]
     assert "User declined" in tool_message["content"]
