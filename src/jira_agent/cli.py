@@ -65,6 +65,12 @@ def _tracing_state_line(tracer) -> str:
 
 
 def _handle_trace_command(tracer, sub: str) -> None:
+    """Implement the /trace slash command family.
+
+    /trace          → toggle on/off and print the new state (with old state
+                      hinted so the user knows what just happened)
+    /trace status   → print current state, path, and lifetime event count
+    """
     if not sub:
         was_on = tracer.enabled
         if tracer.toggle():
