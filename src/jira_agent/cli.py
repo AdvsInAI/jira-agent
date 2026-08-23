@@ -1,18 +1,14 @@
-"""Interactive CLI: a REPL that pipes user input through the Agent.
+"""Interactive Jira agent CLI with approvals and per-turn tracing."""
 
-Tool calls are surfaced inline so you can watch the agent's reasoning step
-by step; a per-turn trace summary is printed afterwards (see
-observability.py and the /trace slash command).
-
-Run: uv run jira-agent
-  (or: uv run python -m jira_agent.cli)
-"""
-
+import argparse
+import asyncio
 import atexit
 import json
 import readline
 import sys
 from pathlib import Path
+
+from mcp.types import Tool
 
 from .agent import Agent
 from .config import load_config
@@ -40,8 +36,7 @@ def _save_history() -> None:
 
 
 def _show_tool_call(name: str, args: dict, result: dict) -> None:
-    args_str = json.dumps(args, ensure_ascii=False)
-    print(f"  -> {name}({args_str})", file=sys.stderr)
+    print(f"  -> {name}({json.dumps(args, ensure_ascii=False)})", file=sys.stderr)
     if result.get("ok"):
         preview = json.dumps(result["result"], ensure_ascii=False)
         if len(preview) > 300:
@@ -51,10 +46,22 @@ def _show_tool_call(name: str, args: dict, result: dict) -> None:
         print(f"  <- error: {result.get('error')}", file=sys.stderr)
 
 
+def _confirm_tool_call(tool: Tool | None, args: dict) -> bool:
+    label = (tool.title or tool.name) if tool is not None else "Unknown tool"
+    name = tool.name if tool is not None else "unknown"
+    print(f"\nProposed Jira write: {label} ({name})", file=sys.stderr)
+    print(json.dumps(args, ensure_ascii=False, indent=2), file=sys.stderr)
+    try:
+        print("Approve? [y/N] ", end="", file=sys.stderr, flush=True)
+        answer = input().strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print(file=sys.stderr)
+        return False
+    return answer in {"y", "yes"}
+
+
 def _tracing_state_line(tracer) -> str:
-    if tracer.enabled:
-        return f"tracing: on -> {tracer.path}"
-    return "tracing: off"
+    return f"tracing: on -> {tracer.path}" if tracer.enabled else "tracing: off"
 
 
 def _handle_trace_command(tracer, sub: str) -> None:
@@ -66,67 +73,76 @@ def _handle_trace_command(tracer, sub: str) -> None:
     """
     if not sub:
         was_on = tracer.enabled
-        new_state = tracer.toggle()
-        if new_state:
+        if tracer.toggle():
             print(f"tracing: on -> {tracer.path} (was off)", file=sys.stderr)
         else:
             assert was_on
             print("tracing: off (was on)", file=sys.stderr)
-        return
-    if sub == "status":
+    elif sub == "status":
         state = "on" if tracer.enabled else "off"
         print(
             f"tracing: {state} -> {tracer.path}  "
             f"({tracer.event_count} events this session)",
             file=sys.stderr,
         )
-        return
-    print(f"unknown /trace subcommand: {sub!r}", file=sys.stderr)
+    else:
+        print(f"unknown /trace subcommand: {sub!r}", file=sys.stderr)
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="LLM-driven Jira agent")
+    parser.add_argument(
+        "--yolo", action="store_true",
+        help="run Jira write tools without asking for confirmation",
+    )
+    return parser.parse_args()
+
+
+async def _run(args: argparse.Namespace) -> None:
+    config = load_config()
+    _setup_readline()
+    tracer = tracer_from_env()
+    approver = (lambda tool, call_args: True) if args.yolo else _confirm_tool_call
+
+    async with Agent(
+        config, on_tool_call=_show_tool_call, approve_tool=approver, tracer=tracer
+    ) as agent:
+        print(f"Jira agent ready. Model: {config.llm.llm_model}")
+        print(_tracing_state_line(tracer))
+        if args.yolo:
+            print("WARNING: --yolo enabled; Jira writes will not be confirmed.")
+        print("Type a request. Ctrl+D or /exit to quit.\n")
+
+        while True:
+            try:
+                user_input = input("> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+            if not user_input:
+                continue
+            if user_input in {"/exit", "/quit"}:
+                break
+            if user_input.startswith("/"):
+                head, _, tail = user_input.partition(" ")
+                if head == "/trace":
+                    _handle_trace_command(tracer, tail.strip())
+                else:
+                    print(f"unknown command: {head}", file=sys.stderr)
+                continue
+            try:
+                reply = await agent.chat(user_input)
+            except KeyboardInterrupt:
+                print("\n(interrupted)", file=sys.stderr)
+                continue
+            except Exception as exc:
+                print(f"Error: {exc}", file=sys.stderr)
+                continue
+            print(f"\n{reply}\n")
 
 
 def main() -> None:
-    cfg = load_config()
-    _setup_readline()
-    tracer = tracer_from_env()
-    agent = Agent(cfg, on_tool_call=_show_tool_call, tracer=tracer)
-
-    print(f"Jira agent ready. Model: {cfg.llm_model}")
-    print(_tracing_state_line(tracer))
-    print("Type a request. Ctrl+D or /exit to quit.\n")
-
-    exit_commands = {"/exit", "/quit"}
-    while True:
-        try:
-            user_input = input("> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            break
-        if not user_input:
-            continue
-        if user_input in exit_commands:
-            break
-
-        # Slash-command router. Everything that starts with "/" is
-        # handled locally rather than forwarded to the model — keeps
-        # space for future commands (e.g. /yolo for ROADMAP item #3).
-        if user_input.startswith("/"):
-            head, _, tail = user_input.partition(" ")
-            sub = tail.strip()
-            if head == "/trace":
-                _handle_trace_command(tracer, sub)
-            else:
-                print(f"unknown command: {head}", file=sys.stderr)
-            continue
-
-        try:
-            reply = agent.chat(user_input)
-        except KeyboardInterrupt:
-            print("\n(interrupted)", file=sys.stderr)
-            continue
-        except Exception as e:
-            print(f"Error: {e}", file=sys.stderr)
-            continue
-        print(f"\n{reply}\n")
+    asyncio.run(_run(_parse_args()))
 
 
 if __name__ == "__main__":

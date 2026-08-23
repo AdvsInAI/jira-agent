@@ -32,7 +32,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .tools import TOOL_TRACE_POLICY
+TOOL_TRACE_POLICY: dict[str, dict[str, list[str]]] = {
+    "create_issue": {
+        "safe": ["project_key", "issue_type", "priority"],
+        "redact": ["summary", "description"],
+    },
+    "search_issues": {"safe": ["max_results"], "redact": ["jql"]},
+    "transition_issue": {
+        "safe": ["issue_key", "transition_name"], "redact": []
+    },
+    "add_comment": {"safe": ["issue_key"], "redact": ["body"]},
+    "assign_issue": {"safe": ["issue_key"], "redact": ["assignee"]},
+}
 
 DEFAULT_TRACE_FILE = Path.home() / ".jira_agent" / "traces.jsonl"
 

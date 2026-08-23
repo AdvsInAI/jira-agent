@@ -2,7 +2,7 @@ from typing import Any
 
 import httpx
 
-from .config import Config
+from .config import JiraConfig
 
 
 class JiraError(Exception):
@@ -40,7 +40,7 @@ class JiraClient:
     which the v3 API requires instead of plain strings.
     """
 
-    def __init__(self, config: Config):
+    def __init__(self, config: JiraConfig):
         self._base = config.jira_base_url
         self._client = httpx.Client(
             auth=(config.jira_email, config.jira_api_token),
